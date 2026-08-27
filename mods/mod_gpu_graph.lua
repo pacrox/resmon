@@ -1,0 +1,382 @@
+-- Custom module: GPU parameters (3D/LLM engine usage plus every GRBM/GRBM2
+-- performance-counter sub-block), scrolling history graph, same rendering
+-- style as CPU Cores Graph (overlaid lines, monochrome palette, brightness
+-- wins on overlap) but in the #FFD068 hue instead of green.
+--
+-- Data source: `amdgpu_top -J`, same rationale/exception as mod_gpu.lua --
+-- this module runs its own independent streaming instance rather than
+-- sharing mod_gpu.lua's pipe, since modules are self-contained and loaded
+-- independently.
+--
+-- The very first line read from a freshly (re)spawned amdgpu_top pipe always
+-- reports every GRBM/GRBM2 sub-block as 0: amdgpu_top gates performance
+-- counter sampling behind an "is the GPU idle" check computed from the
+-- previous fdinfo interval, and on process startup that previous interval
+-- doesn't exist yet, so the first sample is always gated off. Every
+-- subsequent line samples normally. This is a non-issue for the persistent
+-- pipe used here (opened once, read every tick).
+
+local ffi_bit = require("bit")
+local sChar = require("sextant_chars")
+
+local refresh_rate = 0.5
+local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+
+-- monochrome palette: one shade per tracked parameter, linearly interpolated
+-- between a dark and a light endpoint of the same #FFD068 hue (same
+-- construction as CPU Cores Graph's green palette). "LLM" and "3D" get the
+-- two lightest shades (see params order below, palette index follows id);
+-- the GRBM/GRBM2 sub-blocks fill the rest of the range down to the darkest.
+-- The lighter shade always wins where lines overlap (see mark_point),
+-- regardless of draw order.
+local GRAPH_DARK = { r = 127, g = 88, b = 0 }    -- darkest, same hue as #FFD068
+local GRAPH_LIGHT = { r = 255, g = 208, b = 104 } -- #FFD068
+
+local function lerp_color(a, b, t) -- >{
+	return {
+		r = math.floor(a.r + (b.r - a.r) * t + 0.5),
+		g = math.floor(a.g + (b.g - a.g) * t + 0.5),
+		b = math.floor(a.b + (b.b - a.b) * t + 0.5),
+	}
+end -- >}
+
+local function extract_field(json, key) -- >{
+	local escaped_key = key:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+	local pattern = '"' .. escaped_key .. '"%s*:%s*{%s*"unit"%s*:%s*"[^"]*"%s*,%s*"value"%s*:%s*([%-%d%.eE]+)'
+	return tonumber(json:match(pattern))
+end -- >}
+
+-- returns the substring of the JSON object nested under `key`, for looking
+-- up a field name that is not unique at the top level (e.g. "GFX" also
+-- appears under clock/voltage sensors elsewhere in the payload)
+local function extract_object(json, key) -- >{
+	local escaped_key = key:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+	local key_start = json:find('"' .. escaped_key .. '"%s*:%s*{')
+	if not key_start then return nil end
+	local brace_start = json:find("{", key_start)
+	local depth, in_str, escape = 0, false, false
+	for i = brace_start, #json do
+		local c = json:sub(i, i)
+		if in_str then
+			if escape then
+				escape = false
+			elseif c == "\\" then
+				escape = true
+			elseif c == '"' then
+				in_str = false
+			end
+		else
+			if c == '"' then
+				in_str = true
+			elseif c == "{" then
+				depth = depth + 1
+			elseif c == "}" then
+				depth = depth - 1
+				if depth == 0 then return json:sub(brace_start, i) end
+			end
+		end
+	end
+	return nil
+end -- >}
+
+-- one tracked GPU parameter per entry; "fetch" receives the already-scoped
+-- "GRBM"/"GRBM2"/"Total fdinfo" sub-objects (nil if absent from a snapshot)
+-- so field names never need to be re-disambiguated against the full JSON.
+-- Order matters: it fixes the palette shade via id (darkest first).
+local params = { -- >{
+	{ id = 1, label = "Depth Block", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Depth Block")
+	end },
+	{ id = 2, label = "Color Block", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Color Block")
+	end },
+	{ id = 3, label = "Geometry Engine", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Geometry Engine")
+	end },
+	{ id = 4, label = "Graphics Pipe", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Graphics Pipe")
+	end },
+	{ id = 5, label = "Primitive Assembly", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Primitive Assembly")
+	end },
+	{ id = 6, label = "Shader Export", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Shader Export")
+	end },
+	{ id = 7, label = "Shader Processor Interpolator", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Shader Processor Interpolator")
+	end },
+	{ id = 8, label = "Texture Pipe", fetch = function(json, ctx)
+		return ctx.grbm and extract_field(ctx.grbm, "Texture Pipe")
+	end },
+	{ id = 9, label = "Command Processor - Compute", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "Command Processor -  Compute")
+	end },
+	{ id = 10, label = "Command Processor - Fetcher", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "Command Processor -  Fetcher")
+	end },
+	{ id = 11, label = "Command Processor - Graphics", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "Command Processor - Graphics")
+	end },
+	{ id = 12, label = "Efficiency Arbiter", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "Efficiency Arbiter")
+	end },
+	{ id = 13, label = "Render Backend Memory Interface", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "Render Backend Memory Interface")
+	end },
+	{ id = 14, label = "RunList Controller", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "RunList Controller")
+	end },
+	{ id = 15, label = "SDMA", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "SDMA")
+	end },
+	{ id = 16, label = "Texture Cache per Pipe", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "Texture Cache per Pipe")
+	end },
+	{ id = 17, label = "Unified Translation Cache Level-2", fetch = function(json, ctx)
+		return ctx.grbm2 and extract_field(ctx.grbm2, "Unified Translation Cache Level-2")
+	end },
+	{ id = 18, label = "LLM", fetch = function(json, ctx)
+		return ctx.totals and extract_field(ctx.totals, "Compute")
+	end },
+	{ id = 19, label = "3D", fetch = function(json, ctx)
+		return ctx.totals and extract_field(ctx.totals, "GFX")
+	end },
+} -- >}
+
+local graphs_color = {}
+for i = 0, #params - 1 do
+	graphs_color[i + 1] = lerp_color(GRAPH_DARK, GRAPH_LIGHT, i / (#params - 1))
+end
+
+-- raw values are noisy tick to tick; smoothing before plotting keeps the
+-- curve reading as a smooth line instead of a jagged skyline, same as
+-- CPU Cores Graph.
+local SMOOTHING_ALPHA = 0.35
+
+local MAX_HISTORY = 2000
+local smoothed = {} -- smoothed[id] = last exponential-moving-average value
+local history = {} -- history[id] = { {t=, v=}, ... }, sorted by t ascending
+
+local function clamp01(v) -- >{
+	if v < 0 then return 0 end
+	if v > 100 then return 100 end
+	return v
+end -- >}
+
+-- amdgpu_top takes ~1.1s to start producing output (device probing), so it is
+-- spawned ONCE as a long-running process in NDJSON streaming mode (-s <ms>,
+-- one complete JSON object per line) instead of being re-spawned every tick.
+-- The child is left running: when resmon exits, the OS closes the pipe's read
+-- end, and the child gets SIGPIPE on its next write and dies on its own.
+local gpu_pipe = nil
+local pipe_failed = false
+
+local function get_pipe() -- >{
+	if gpu_pipe or pipe_failed then return gpu_pipe end
+	local interval_ms = math.max(math.floor(refresh_rate * 1000), 100)
+	gpu_pipe = io.popen("amdgpu_top -J -s " .. interval_ms .. " 2>/dev/null")
+	if not gpu_pipe then pipe_failed = true end
+	return gpu_pipe
+end -- >}
+
+local function fetch_snapshot() -- >{
+	local pipe = get_pipe()
+	if not pipe then return nil end
+	local line = pipe:read("*l")
+	if not line or line == "" then
+		pipe:close()
+		gpu_pipe = nil -- allow a respawn attempt on the next tick
+		return nil
+	end
+	return line
+end -- >}
+
+local function push_sample(id, v, t) -- >{
+	local h = history[id]
+	if not h then
+		h = {}
+		history[id] = h
+	end
+	h[#h + 1] = { t = t, v = v }
+	if #h > MAX_HISTORY * 1.5 then
+		local trimmed = {}
+		for i = #h - MAX_HISTORY + 1, #h do trimmed[#trimmed + 1] = h[i] end
+		history[id] = trimmed
+	end
+end -- >}
+
+-- returns the value of the last sample at or before target_t, or nil if
+-- target_t predates the oldest recorded sample (not enough history yet)
+local function value_at_time(h, target_t) -- >{
+	local n = #h
+	if n == 0 or target_t < h[1].t then return nil end
+	local lo, hi = 1, n
+	while lo < hi do
+		local mid = math.floor((lo + hi + 1) / 2)
+		if h[mid].t <= target_t then lo = mid else hi = mid - 1 end
+	end
+	return h[lo].v
+end -- >}
+
+local function x_tick_labels() -- >{
+	local labels = {}
+	local seconds_ago = time_interval
+	while seconds_ago > 0 do
+		labels[#labels + 1] = "-" .. seconds_ago .. "s"
+		seconds_ago = seconds_ago - 10
+	end
+	labels[#labels + 1] = "now"
+	return labels
+end -- >}
+
+local function pick_color(id) -- >{
+	return graphs_color[id]
+end -- >}
+
+local function brightness(c) -- >{
+	return c.r + c.g + c.b
+end -- >}
+
+-- marks a single sub-cell (slot = half-cell column index, level = sub-row
+-- from the bottom) in the shared grid.
+local function mark_point(grid, vres, slot, level, color) -- >{
+	local global_row = vres - 1 - level
+	local row = math.floor(global_row / 3)
+	local p = global_row % 3
+	local col = math.floor(slot / 2)
+	local sub_c = slot % 2
+	local bitpos = p * 2 + sub_c
+	local cell = grid[row][col]
+	cell.mask = ffi_bit.bor(cell.mask, ffi_bit.lshift(1, bitpos))
+	-- the lighter shade always wins where lines overlap, regardless of
+	-- which parameter's line reaches this cell first or last
+	if not cell.color or brightness(color) > brightness(cell.color) then
+		cell.color = color
+	end
+end -- >}
+
+-- joins two consecutive samples (one half-cell column apart) with a
+-- diagonal line rather than a solid vertical block: since the two points
+-- are exactly 1 column apart, a proper line between them only ever touches
+-- those 2 columns, splitting the intervening rows so the ones closer to
+-- the previous sample use its column and the ones closer to the new
+-- sample use the new column -- the standard steep-line Bresenham case.
+local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color) -- >{
+	local steps = math.abs(level - prev_level)
+	if steps == 0 then
+		mark_point(grid, vres, slot, level, color)
+		return
+	end
+	local dir = (level > prev_level) and 1 or -1
+	for i = 0, steps do
+		local l = prev_level + dir * i
+		local s = (i / steps < 0.5) and prev_slot or slot
+		mark_point(grid, vres, s, l, color)
+	end
+end -- >}
+
+local function build_grid(graph_w, graph_h, now) -- >{
+	local grid = {}
+	for row = 0, graph_h - 1 do
+		grid[row] = {}
+		for col = 0, graph_w - 1 do grid[row][col] = { mask = 0, color = nil } end
+	end
+
+	local sample_cols = graph_w * 2
+	local vres = graph_h * 3
+
+	for _, param in ipairs(params) do
+		local h = history[param.id]
+		if h then
+			local color = pick_color(param.id)
+			local prev_slot, prev_level = nil, nil
+			for slot = 0, sample_cols - 1 do
+				local seconds_ago = time_interval * (1 - slot / sample_cols)
+				local v = value_at_time(h, now - seconds_ago)
+				if v ~= nil then
+					local frac = clamp01(v / 100)
+					local level = math.floor(frac * (vres - 1) + 0.5)
+					if prev_slot ~= nil then
+						mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color)
+					else
+						mark_point(grid, vres, slot, level, color)
+					end
+					prev_slot, prev_level = slot, level
+				else
+					prev_slot, prev_level = nil, nil
+				end
+			end
+		end
+	end
+
+	return grid
+end -- >}
+
+local function redraw(pane) -- >{
+	local now = MonotonicNow()
+	local snap = fetch_snapshot()
+	if snap then
+		local ctx = {
+			totals = extract_object(snap, "Total fdinfo"),
+			grbm = extract_object(snap, "GRBM"),
+			grbm2 = extract_object(snap, "GRBM2"),
+		}
+		for _, param in ipairs(params) do
+			local v = param.fetch(snap, ctx)
+			if v ~= nil then
+				-- fdinfo/perf-counter percentages can briefly exceed 100
+				-- (rounding, multi-queue overlap); clamp here so it never
+				-- propagates into an out-of-range grid row in build_grid
+				v = clamp01(v)
+				local prev = smoothed[param.id]
+				local ema = prev and (SMOOTHING_ALPHA * v + (1 - SMOOTHING_ALPHA) * prev) or v
+				smoothed[param.id] = ema
+				push_sample(param.id, ema, now)
+			end
+		end
+	end
+
+	if pane.w <= 0 or pane.h <= 0 then return end
+
+	local AXIS_W = 5
+	local axis_x = pane.x + AXIS_W
+	local graph_w = math.max(pane.w - AXIS_W - 1, 0)
+	local graph_h = math.max(pane.h - 2, 1)
+
+	local yticks = Pow2Ticks(0, 100, math.max(1, math.floor(graph_h / 4)))
+	Axis(
+		{ x = axis_x, y = pane.y, w = graph_w, h = graph_h },
+		{ min = -time_interval, max = 0 },
+		{ min = 0, max = 100 },
+		{ x = x_tick_labels(), y = yticks }
+	)
+
+	local grid = build_grid(graph_w, graph_h, now)
+	for row = 0, graph_h - 1 do
+		local run_col = 0
+		local run_color = grid[row][0].color
+		local run_chars = { sChar[grid[row][0].mask] }
+		for col = 1, graph_w - 1 do
+			local cell = grid[row][col]
+			if cell.color == run_color then
+				run_chars[#run_chars + 1] = sChar[cell.mask]
+			else
+				WriteAt(axis_x + 1 + run_col, pane.y + row, table.concat(run_chars), run_color)
+				run_col = col
+				run_color = cell.color
+				run_chars = { sChar[cell.mask] }
+			end
+		end
+		WriteAt(axis_x + 1 + run_col, pane.y + row, table.concat(run_chars), run_color)
+	end
+end -- >}
+
+return { -- >{
+	title = "GPU Graph",
+	min_w = 20,
+	min_h = 8,
+	default_delay = refresh_rate,
+	redraw = redraw,
+} -- >}
+
+-- vim: filetype=lua foldmethod=marker foldmarker=>{,>}
