@@ -1,0 +1,25 @@
+-- Example resmon configuration.
+-- Copy to ~/.config/resmon/config.lua (or point --config-file at a copy of this).
+--
+-- "name" for a base module must be one of: cpu, mem, top.
+-- Any other "name" is loaded from <modules-dir>/<name>.lua (default: ~/.config/resmon/mods),
+-- so it must match the module's filename exactly, e.g. "mod_cpu_cores" for mod_cpu_cores.lua.
+-- "weight" controls the proportional share of terminal space (default 1, equal split).
+-- A negative "weight" is an exact line count instead of a proportional share, e.g.
+-- weight = -10 always gives that module exactly 10 rows (vertical) or columns
+-- (horizontal); the remaining space is split proportionally among the rest.
+-- "refresh" overrides a module's default refresh delay in seconds (ignored by modules
+-- that set fixed_delay = true, e.g. the CPU load average module).
+
+return { -- >{
+	orientation = "vertical",
+
+	modules = {
+		{ name = "cpu" },
+		{ name = "mem", weight = 1 },
+		{ name = "mod_cpu_cores", weight = 2 },
+		{ name = "top", weight = 3 },
+	},
+} -- >}
+
+-- vim: filetype=lua foldmethod=marker foldmarker=>{,>}
