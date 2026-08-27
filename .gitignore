@@ -1,0 +1,12 @@
+*.swp
+
+.claude
+CLAUDE.md
+
+_*
+
+# build artifacts
+/resmon
+*.o
+/generated/
+

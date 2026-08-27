@@ -1,0 +1,60 @@
+CC := gcc
+LUAJIT := luajit
+CFLAGS := -O2 -Wall -Wextra -Igenerated $(shell pkg-config --cflags luajit 2>/dev/null)
+
+# LuaJIT is linked in statically (no runtime dependency on libluajit-5.1.so /
+# a system luajit install); glibc/libm/libdl stay dynamic on purpose: LuaJIT's
+# FFI resolves ffi.C.* symbols via dlsym-style lookup, which does not work
+# against a fully statically linked glibc (verified: -static breaks it with
+# "undefined symbol" at runtime for every ffi.C call). glibc/libm are present
+# on every Linux system, so this is still a self-contained, dependency-free
+# executable in the sense that matters: no Lua/LuaJIT install required.
+LUAJIT_STATIC_LIB := $(shell gcc -print-file-name=libluajit-5.1.a)
+LDLIBS := $(LUAJIT_STATIC_LIB) -lm -ldl
+
+BIN := resmon
+GEN_HEADERS := generated/core_bc.h generated/sextant_chars_bc.h \
+               generated/mod_cpu_bc.h generated/mod_mem_bc.h generated/mod_top_bc.h
+
+HOME_CONFIG := $(HOME)/.config/resmon
+
+.PHONY: all clean install-config
+
+all: $(BIN)
+
+$(BIN): host.o
+	$(CC) host.o -o $(BIN) $(LDLIBS)
+
+host.o: host.c $(GEN_HEADERS)
+	$(CC) $(CFLAGS) -c host.c -o host.o
+
+generated/core_bc.h: src/core.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n core -t h src/core.lua generated/core_bc.h
+
+generated/sextant_chars_bc.h: src/sextant_chars.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n sextant_chars -t h src/sextant_chars.lua generated/sextant_chars_bc.h
+
+generated/mod_cpu_bc.h: src/mod_cpu.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n mod_cpu -t h src/mod_cpu.lua generated/mod_cpu_bc.h
+
+generated/mod_mem_bc.h: src/mod_mem.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n mod_mem -t h src/mod_mem.lua generated/mod_mem_bc.h
+
+generated/mod_top_bc.h: src/mod_top.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n mod_top -t h src/mod_top.lua generated/mod_top_bc.h
+
+install-config:
+	mkdir -p $(HOME_CONFIG)/mods
+	test -f $(HOME_CONFIG)/config.lua || cp config/config.lua.example $(HOME_CONFIG)/config.lua
+	cp mods/mod_cpu_cores.lua mods/mod_cpu_cores_graph.lua mods/mod_gpu.lua $(HOME_CONFIG)/mods/
+
+clean:
+	rm -f host.o $(BIN) $(GEN_HEADERS)
+	rmdir generated 2>/dev/null || true
+
+# vim: filetype=make foldmethod=marker foldmarker=>{,>}
