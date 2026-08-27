@@ -1,0 +1,273 @@
+-- Custom module: per-core CPU usage history, all cores overlaid in one
+-- shared 0-100 plot (not stacked), scrolling right-to-left, each core in
+-- its own shade and its samples connected by continuous lines.
+
+local ffi_bit = require("bit")
+local sChar = require("sextant_chars")
+
+local refresh_rate = 0.33
+local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+
+-- monochrome palette: one shade per core, linearly interpolated between a
+-- dark and a light green endpoint (same hue throughout, only brightness
+-- varies), palest first. GRAPH_PALETTE_SIZE colors are generated regardless
+-- of the actual core count; pick_color cycles through them if there are
+-- more cores than entries. Where two cores' lines land on the same cell,
+-- the lighter shade always wins (see mark_point) regardless of which core
+-- happened to be drawn last.
+local GRAPH_DARK = { r = 39, g = 80, b = 44 }   -- darkest, 10% lighter than pure dark
+local GRAPH_LIGHT = { r = 189, g = 230, b = 198 } -- palest, 10% darker than pure light
+local GRAPH_PALETTE_SIZE = 20
+
+local function lerp_color(a, b, t) -- >{
+	return {
+		r = math.floor(a.r + (b.r - a.r) * t + 0.5),
+		g = math.floor(a.g + (b.g - a.g) * t + 0.5),
+		b = math.floor(a.b + (b.b - a.b) * t + 0.5),
+	}
+end -- >}
+
+local function build_palette() -- >{
+	local t = {}
+	for i = 0, GRAPH_PALETTE_SIZE - 1 do
+		t[i + 1] = lerp_color(GRAPH_DARK, GRAPH_LIGHT, i / (GRAPH_PALETTE_SIZE - 1))
+	end
+	return t
+end -- >}
+
+local graphs_color = build_palette()
+
+-- raw per-core %CPU is noisy sample to sample; smoothing it before plotting
+-- keeps consecutive points closer together, so the diagonal joins between
+-- them stay short and the curve reads as a smooth line instead of a jagged
+-- skyline of steep steps. Lower alpha = smoother but slower to react.
+local SMOOTHING_ALPHA = 0.35
+
+local MAX_HISTORY = 2000
+local prev_times = nil
+local smoothed = {} -- smoothed[id] = last exponential-moving-average value
+local history = {} -- history[id] = { {t=, v=}, ... }, sorted by t ascending
+
+local function clamp01(v) -- >{
+	if v < 0 then return 0 end
+	if v > 100 then return 100 end
+	return v
+end -- >}
+
+local function read_cpu_times() -- >{
+	local raw = ReadProcFile("/proc/stat")
+	local times = {}
+	if not raw then return times end
+	for line in raw:gmatch("[^\n]+") do
+		local id, rest = line:match("^cpu(%d+)%s+(.*)$")
+		if id then
+			local total, idle, field = 0, 0, 0
+			for n in rest:gmatch("%d+") do
+				field = field + 1
+				local v = tonumber(n)
+				total = total + v
+				if field == 4 or field == 5 then idle = idle + v end
+			end
+			times[tonumber(id)] = { total = total, idle = idle }
+		end
+	end
+	return times
+end -- >}
+
+local function core_usage_percents() -- >{
+	local cur = read_cpu_times()
+	local pct = {}
+	for id, t in pairs(cur) do
+		local p = prev_times and prev_times[id]
+		if p then
+			local dtotal = t.total - p.total
+			local didle = t.idle - p.idle
+			pct[id] = (dtotal > 0) and clamp01((dtotal - didle) / dtotal * 100) or 0
+		else
+			pct[id] = 0
+		end
+	end
+	prev_times = cur
+	return pct
+end -- >}
+
+local function push_sample(id, v, t) -- >{
+	local h = history[id]
+	if not h then
+		h = {}
+		history[id] = h
+	end
+	h[#h + 1] = { t = t, v = v }
+	if #h > MAX_HISTORY * 1.5 then
+		local trimmed = {}
+		for i = #h - MAX_HISTORY + 1, #h do trimmed[#trimmed + 1] = h[i] end
+		history[id] = trimmed
+	end
+end -- >}
+
+-- returns the value of the last sample at or before target_t, or nil if
+-- target_t predates the oldest recorded sample (not enough history yet)
+local function value_at_time(h, target_t) -- >{
+	local n = #h
+	if n == 0 or target_t < h[1].t then return nil end
+	local lo, hi = 1, n
+	while lo < hi do
+		local mid = math.floor((lo + hi + 1) / 2)
+		if h[mid].t <= target_t then lo = mid else hi = mid - 1 end
+	end
+	return h[lo].v
+end -- >}
+
+local function x_tick_labels() -- >{
+	local labels = {}
+	local seconds_ago = time_interval
+	while seconds_ago > 0 do
+		labels[#labels + 1] = "-" .. seconds_ago .. "s"
+		seconds_ago = seconds_ago - 10
+	end
+	labels[#labels + 1] = "now"
+	return labels
+end -- >}
+
+local function pick_color(id) -- >{
+	if type(graphs_color) == "table" and (type(graphs_color[1]) == "table" or type(graphs_color[1]) == "string") then
+		return graphs_color[(id % #graphs_color) + 1]
+	end
+	return graphs_color
+end -- >}
+
+-- marks a single sub-cell (slot = half-cell column index, level = sub-row
+-- from the bottom) in the shared grid.
+local function brightness(c) -- >{
+	return c.r + c.g + c.b
+end -- >}
+
+local function mark_point(grid, vres, slot, level, color) -- >{
+	local global_row = vres - 1 - level
+	local row = math.floor(global_row / 3)
+	local p = global_row % 3
+	local col = math.floor(slot / 2)
+	local sub_c = slot % 2
+	local bitpos = p * 2 + sub_c
+	local cell = grid[row][col]
+	cell.mask = ffi_bit.bor(cell.mask, ffi_bit.lshift(1, bitpos))
+	-- the lighter shade always wins where lines overlap, regardless of
+	-- which core's line reaches this cell first or last
+	if not cell.color or brightness(color) > brightness(cell.color) then
+		cell.color = color
+	end
+end -- >}
+
+-- joins two consecutive samples (one half-cell column apart) with a
+-- diagonal line rather than a solid vertical block: since the two points
+-- are exactly 1 column apart, a proper line between them only ever touches
+-- those 2 columns, splitting the intervening rows so the ones closer to
+-- the previous sample use its column and the ones closer to the new
+-- sample use the new column -- the standard steep-line Bresenham case.
+local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color) -- >{
+	local steps = math.abs(level - prev_level)
+	if steps == 0 then
+		mark_point(grid, vres, slot, level, color)
+		return
+	end
+	local dir = (level > prev_level) and 1 or -1
+	for i = 0, steps do
+		local l = prev_level + dir * i
+		local s = (i / steps < 0.5) and prev_slot or slot
+		mark_point(grid, vres, s, l, color)
+	end
+end -- >}
+
+local function build_grid(ids, graph_w, graph_h, now) -- >{
+	local grid = {}
+	for row = 0, graph_h - 1 do
+		grid[row] = {}
+		for col = 0, graph_w - 1 do grid[row][col] = { mask = 0, color = nil } end
+	end
+
+	local sample_cols = graph_w * 2
+	local vres = graph_h * 3
+
+	for _, id in ipairs(ids) do
+		local h = history[id]
+		if h then
+			local color = pick_color(id)
+			local prev_slot, prev_level = nil, nil
+			for slot = 0, sample_cols - 1 do
+				local seconds_ago = time_interval * (1 - slot / sample_cols)
+				local v = value_at_time(h, now - seconds_ago)
+				if v ~= nil then
+					local frac = clamp01(v / 100)
+					local level = math.floor(frac * (vres - 1) + 0.5)
+					if prev_slot ~= nil then
+						mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color)
+					else
+						mark_point(grid, vres, slot, level, color)
+					end
+					prev_slot, prev_level = slot, level
+				else
+					prev_slot, prev_level = nil, nil
+				end
+			end
+		end
+	end
+
+	return grid
+end -- >}
+
+local function redraw(pane) -- >{
+	local now = MonotonicNow()
+	local pct = core_usage_percents()
+	local ids = {}
+	for id, v in pairs(pct) do
+		ids[#ids + 1] = id
+		local prev = smoothed[id]
+		local ema = prev and (SMOOTHING_ALPHA * v + (1 - SMOOTHING_ALPHA) * prev) or v
+		smoothed[id] = ema
+		push_sample(id, ema, now)
+	end
+	table.sort(ids)
+	if #ids == 0 or pane.w <= 0 or pane.h <= 0 then return end
+
+	local AXIS_W = 5
+	local axis_x = pane.x + AXIS_W
+	local graph_w = math.max(pane.w - AXIS_W - 1, 0)
+	local graph_h = math.max(pane.h - 2, 1)
+
+	local yticks = Pow2Ticks(0, 100, math.max(1, math.floor(graph_h / 4)))
+	Axis(
+		{ x = axis_x, y = pane.y, w = graph_w, h = graph_h },
+		{ min = -time_interval, max = 0 },
+		{ min = 0, max = 100 },
+		{ x = x_tick_labels(), y = yticks }
+	)
+
+	local grid = build_grid(ids, graph_w, graph_h, now)
+	for row = 0, graph_h - 1 do
+		local run_col = 0
+		local run_color = grid[row][0].color
+		local run_chars = { sChar[grid[row][0].mask] }
+		for col = 1, graph_w - 1 do
+			local cell = grid[row][col]
+			if cell.color == run_color then
+				run_chars[#run_chars + 1] = sChar[cell.mask]
+			else
+				WriteAt(axis_x + 1 + run_col, pane.y + row, table.concat(run_chars), run_color)
+				run_col = col
+				run_color = cell.color
+				run_chars = { sChar[cell.mask] }
+			end
+		end
+		WriteAt(axis_x + 1 + run_col, pane.y + row, table.concat(run_chars), run_color)
+	end
+end -- >}
+
+return { -- >{
+	title = "CPU Cores Graph",
+	min_w = 20,
+	min_h = 8,
+	default_delay = refresh_rate,
+	redraw = redraw,
+} -- >}
+
+-- vim: filetype=lua foldmethod=marker foldmarker=>{,>}
