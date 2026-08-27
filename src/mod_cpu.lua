@@ -6,7 +6,7 @@ local bar_colors = { -- >{
 	{ r = 220, g = 70, b = 70 },
 } -- >}
 
-local SCALE_MIN, SCALE_MAX = 0, 25
+local SCALE_MIN, SCALE_MAX = 0, 12
 local LABELS = { "1m", "5m", "15m" }
 local LABEL_W = 4
 local VALUE_W = 6
