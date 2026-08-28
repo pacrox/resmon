@@ -7,12 +7,37 @@
 
 local refresh_rate = 0.33
 
-local bars_colors = { -- >{
-	{ r = 134, g = 190, b = 67 },  -- green, #86be43
-	{ r = 230, g = 200, b = 60 },  -- yellow
-	{ r = 230, g = 140, b = 40 },  -- orange
-	{ r = 220, g = 70, b = 70 },   -- red
-} -- >}
+-- 25-shade gradient: green (0%) through yellow/orange (50%) to red (100%),
+-- two linear segments joined at the midpoint. BandColor() (see core.lua)
+-- picks one of these 25 entries by value, giving 25 discrete color steps
+-- instead of the previous 4 flat bands.
+local GRAD_LOW = { r = 134, g = 190, b = 67 }  -- green, #86be43
+local GRAD_MID = { r = 230, g = 140, b = 40 }  -- yellow/orange
+local GRAD_HIGH = { r = 220, g = 70, b = 70 }  -- red
+local BARS_COLOR_COUNT = 25
+
+local function lerp_color(a, b, t) -- >{
+	return {
+		r = math.floor(a.r + (b.r - a.r) * t + 0.5),
+		g = math.floor(a.g + (b.g - a.g) * t + 0.5),
+		b = math.floor(a.b + (b.b - a.b) * t + 0.5),
+	}
+end -- >}
+
+local function build_bars_colors() -- >{
+	local t = {}
+	for i = 0, BARS_COLOR_COUNT - 1 do
+		local frac = i / (BARS_COLOR_COUNT - 1)
+		if frac <= 0.5 then
+			t[i + 1] = lerp_color(GRAD_LOW, GRAD_MID, frac / 0.5)
+		else
+			t[i + 1] = lerp_color(GRAD_MID, GRAD_HIGH, (frac - 0.5) / 0.5)
+		end
+	end
+	return t
+end -- >}
+
+local bars_colors = build_bars_colors()
 
 local SCALE_MIN, SCALE_MAX = 0, 100
 local prev_times = nil
@@ -42,6 +67,22 @@ local function read_cpu_times() -- >{
 		end
 	end
 	return times
+end -- >}
+
+-- draws one column: a real core's bar, or a synthetic interpolated one
+-- (width 1, value = average of its two neighbors) inserted to fill the
+-- remainder of the pane width -- see the gap-insertion comment in redraw().
+local function draw_column(pane, bar_h, show_axis, x, w, v) -- >{
+	if w <= 0 then return end
+	local bar_pane = { x = x, y = pane.y, w = w, h = bar_h }
+	Bar(bar_pane, v, SCALE_MIN, SCALE_MAX, "vertical", bars_colors)
+	if show_axis then
+		local label = string.format("%.0f", v)
+		local pad_left = math.max(math.floor((w - #label) / 2), 0)
+		label = string.rep(" ", pad_left) .. label
+		label = label .. string.rep(" ", math.max(w - #label, 0))
+		WriteAt(x, pane.y + bar_h + 1, label)
+	end
 end -- >}
 
 local function core_usage_percents() -- >{
@@ -98,23 +139,30 @@ local function redraw(pane) -- >{
 		WriteAt(axis_x, pane.y + bar_h, string.rep("\u{2500}", bars_w))
 	end
 
-	-- bars_w rarely divides evenly by npulse; instead of leaving the
-	-- remainder as dead space past the last column (which would pull the
-	-- whole mirrored shape off-center), the leftover width is handed out
-	-- one column at a time to the outermost pair first, then the next pair
-	-- inward, and so on -- every column still mirrors its counterpart on
-	-- the other side, and the columns exactly fill bars_w edge to edge.
+	-- bars_w rarely divides evenly by npulse. Rather than stretching an
+	-- existing core's bar to soak up the remainder (a flat-topped, blocky
+	-- widening), the leftover width is used to insert new columns between
+	-- adjacent pulse entries, each at the average height of its two
+	-- neighbors -- a linear interpolation of the step between them, with an
+	-- automatically blended color too since it goes through the same
+	-- value-based gradient lookup as a real column. One inserted column per
+	-- gap at most (remainder is always < npulse, and there are npulse-1
+	-- gaps), starting at the single gap exactly in the center and moving
+	-- outward in mirrored pairs from there.
 	local base_w = math.floor(bars_w / npulse)
-	local widths = {}
-	for i = 1, npulse do widths[i] = base_w end
 	local remainder = bars_w - base_w * npulse
-	local pair = 0
-	while remainder > 0 do
-		local left_idx, right_idx = pair + 1, npulse - pair
-		widths[left_idx] = widths[left_idx] + 1
+
+	local gap_insert = {}
+	if remainder > 0 then
+		gap_insert[ncores] = true
 		remainder = remainder - 1
-		if remainder > 0 and right_idx ~= left_idx then
-			widths[right_idx] = widths[right_idx] + 1
+	end
+	local pair = 1
+	while remainder > 0 do
+		gap_insert[ncores - pair] = true
+		remainder = remainder - 1
+		if remainder > 0 then
+			gap_insert[ncores + pair] = true
 			remainder = remainder - 1
 		end
 		pair = pair + 1
@@ -122,19 +170,13 @@ local function redraw(pane) -- >{
 
 	local x = bars_x
 	for i, core in ipairs(pulse) do
-		local w = widths[i]
-		if w > 0 then
-			local bar_pane = { x = x, y = pane.y, w = w, h = bar_h }
-			Bar(bar_pane, core.v, SCALE_MIN, SCALE_MAX, "vertical", bars_colors)
-			if show_axis then
-				local label = string.format("%.0f", core.v)
-				local pad_left = math.max(math.floor((w - #label) / 2), 0)
-				label = string.rep(" ", pad_left) .. label
-				label = label .. string.rep(" ", math.max(w - #label, 0))
-				WriteAt(x, pane.y + bar_h + 1, label)
-			end
+		draw_column(pane, bar_h, show_axis, x, base_w, core.v)
+		x = x + base_w
+		if gap_insert[i] then
+			local avg_v = (core.v + pulse[i + 1].v) / 2
+			draw_column(pane, bar_h, show_axis, x, 1, avg_v)
+			x = x + 1
 		end
-		x = x + w
 	end
 end -- >}
 
