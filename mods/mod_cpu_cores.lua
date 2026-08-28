@@ -72,7 +72,7 @@ local function redraw(pane) -- >{
 	if ncores == 0 or pane.w <= 0 or pane.h <= 0 then return end
 
 	local show_axis = pane.h > 5 and pane.w > 8
-	local AXIS_W = 5
+	local AXIS_W = 6
 	local axis_x = show_axis and (pane.x + AXIS_W) or pane.x
 	local bars_x = show_axis and (axis_x + 1) or pane.x
 	local bars_w = math.max(pane.w - (bars_x - pane.x), 0)

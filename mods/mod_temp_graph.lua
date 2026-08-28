@@ -192,7 +192,7 @@ local function redraw(pane) -- >{
 
 	if pane.w <= 0 or pane.h <= 0 then return end
 
-	local AXIS_W = 5
+	local AXIS_W = 6
 	local axis_x = pane.x + AXIS_W
 	local graph_w = math.max(pane.w - AXIS_W - 1, 0)
 	local graph_h = math.max(pane.h - 2, 1)
