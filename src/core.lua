@@ -448,10 +448,13 @@ local function read_key()
 	if not n or n <= 0 then return nil end
 	-- with VMIN=0/VTIME=0 a single read() drains whatever is already queued,
 	-- so a real multi-byte escape sequence (arrow/function/home/end keys)
-	-- arrives as more than one byte in the same read; only a lone ESC byte
-	-- is treated as the ESC key itself, so those sequences are ignored
-	-- instead of being misread as a plain ESC keypress
-	if n > 1 then return nil end
+	-- arrives as more than one byte, starting with ESC, in the same read;
+	-- only a LONE ESC byte is treated as the ESC key itself, so a sequence
+	-- led by ESC is ignored instead of being misread as a plain ESC keypress.
+	-- A multi-byte read NOT led by ESC is just two ordinary keypresses that
+	-- happened to land in the same poll (e.g. a fast key repeat) -- the
+	-- first one is processed normally, same as before this ESC handling.
+	if n > 1 and input_buf[0] == 27 then return nil end
 	return input_buf[0]
 end
 -- >}
