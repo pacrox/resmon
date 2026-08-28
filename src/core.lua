@@ -445,8 +445,14 @@ end
 local input_buf = ffi.new("char[16]")
 local function read_key()
 	local n = libc.read(STDIN, input_buf, 16)
-	if n and n > 0 then return input_buf[0] end
-	return nil
+	if not n or n <= 0 then return nil end
+	-- with VMIN=0/VTIME=0 a single read() drains whatever is already queued,
+	-- so a real multi-byte escape sequence (arrow/function/home/end keys)
+	-- arrives as more than one byte in the same read; only a lone ESC byte
+	-- is treated as the ESC key itself, so those sequences are ignored
+	-- instead of being misread as a plain ESC keypress
+	if n > 1 then return nil end
+	return input_buf[0]
 end
 -- >}
 
