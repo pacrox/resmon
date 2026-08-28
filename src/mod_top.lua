@@ -10,6 +10,11 @@ local procs_color = { -- >{
 
 local procs_text_color = { r = 220, g = 220, b = 220 }
 
+local BOLD = "\27[1m"
+local BOLD_OFF = "\27[22m"
+
+local COL_PID, COL_USER, COL_CPU, COL_MEM, COL_TIME = 8, 11, 7, 7, 10
+
 -- assumed clock ticks per second (sysconf(_SC_CLK_TCK)); standard on Linux x86_64
 local CLK_TCK = 100
 
@@ -97,21 +102,27 @@ local function redraw(pane) -- >{
 	end
 	table.sort(procs, function(a, b) return a.cpu_pct > b.cpu_pct end)
 
-	local header = pad("PID", 8) .. pad("USER", 11) .. pad("%CPU", 7) .. pad("%MEM", 7) .. pad("TIME+", 10) .. "COMMAND"
-	WriteAt(pane.x, pane.y, pad(header, pane.w))
+	local cmd_w = math.max(pane.w - (COL_PID + COL_USER + COL_CPU + COL_MEM + COL_TIME), 0)
+
+	local header = pad("PID", COL_PID) .. pad("USER", COL_USER)
+		.. BOLD .. pad("%CPU", COL_CPU) .. pad("%MEM", COL_MEM) .. BOLD_OFF
+		.. pad("TIME+", COL_TIME) .. BOLD .. pad("COMMAND", cmd_w) .. BOLD_OFF
+	WriteAt(pane.x, pane.y, header)
 
 	local rows_available = pane.h - 1
 	for i = 1, math.min(rows_available, #procs) do
 		local p = procs[i]
-		local line = pad(p.pid, 8) .. pad(p.user, 11) .. pad(string.format("%.1f", p.cpu_pct), 7)
-			.. pad(string.format("%.1f", p.mem_pct), 7) .. pad(p.time_str, 10) .. p.command
+		local line = pad(p.pid, COL_PID) .. pad(p.user, COL_USER)
+			.. BOLD .. pad(string.format("%.1f", p.cpu_pct), COL_CPU)
+			.. pad(string.format("%.1f", p.mem_pct), COL_MEM) .. BOLD_OFF
+			.. pad(p.time_str, COL_TIME) .. BOLD .. pad(p.command, cmd_w) .. BOLD_OFF
 		local bg = BandColor(p.cpu_pct, 0, 100, procs_color)
-		WriteAt(pane.x, pane.y + i, pad(line, pane.w), procs_text_color, bg)
+		WriteAt(pane.x, pane.y + i, line, procs_text_color, bg)
 	end
 end -- >}
 
 return { -- >{
-	title = "Top Processes",
+	title = "TOP Processes",
 	min_w = 40,
 	min_h = 4,
 	default_delay = refresh_rate,

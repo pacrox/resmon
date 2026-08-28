@@ -6,12 +6,21 @@ local bar_colors = { -- >{
 	{ r = 220, g = 70, b = 70 },
 } -- >}
 
+local BOLD = "\27[1m"
+local BOLD_OFF = "\27[22m"
+
 local SCALE_MIN, SCALE_MAX = 0, 12
 local LABELS = { "1m", "5m", "15m" }
-local LABEL_W = 4
+local LABEL_W = 6 -- blank + up to 4 chars of label + blank, before the Y axis
 local VALUE_W = 6
 local AXIS_H = 2 -- axis line + tick label row
 local SEPARATORS = 2 -- blank row between each of the 3 bars
+
+local function pad(s, w) -- >{
+	s = tostring(s)
+	if #s > w then return s:sub(1, w) end
+	return s .. string.rep(" ", w - #s)
+end -- >}
 
 local function read_loadavg() -- >{
 	local raw = ReadProcFile("/proc/loadavg")
@@ -22,8 +31,9 @@ end -- >}
 
 local function redraw(pane) -- >{
 	local values = { read_loadavg() }
-	local bar_x = pane.x + LABEL_W
-	local bar_w = math.max(pane.w - LABEL_W - VALUE_W, 0)
+	local axis_x = pane.x + LABEL_W
+	local bar_x = axis_x + 1
+	local bar_w = math.max(pane.w - LABEL_W - 1 - VALUE_W, 0)
 
 	local bars_h = math.max(pane.h - AXIS_H - SEPARATORS, 3)
 	local base_block_h = math.max(1, math.floor(bars_h / 3))
@@ -36,13 +46,17 @@ local function redraw(pane) -- >{
 		Bar(bar_pane, values[i], SCALE_MIN, SCALE_MAX, "horizontal", bar_colors)
 
 		local label_row = y + math.floor(block_h / 2)
-		WriteAt(pane.x, label_row, LABELS[i])
-		WriteAt(bar_x + bar_w + 1, label_row, string.format("%.2f", values[i]))
+		WriteAt(pane.x, label_row, " " .. pad(LABELS[i], 4))
+		WriteAt(bar_x + bar_w + 1, label_row, BOLD .. string.format("%.2f", values[i]) .. BOLD_OFF)
 		used_h = used_h + block_h
 	end
 
-	local axis_y = pane.y + used_h + SEPARATORS
-	Axis({ x = bar_x, y = axis_y, w = bar_w, h = 0 }, { min = SCALE_MIN, max = SCALE_MAX }, nil, nil)
+	Axis(
+		{ x = axis_x, y = pane.y, w = bar_w, h = used_h + SEPARATORS },
+		{ min = SCALE_MIN, max = SCALE_MAX },
+		{ min = 0, max = 1 },
+		{ y = {} }
+	)
 end -- >}
 
 return { -- >{

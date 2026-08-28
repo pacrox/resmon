@@ -152,10 +152,16 @@ local FRAME_CHARS = {
 	double = { tl = "\u{2554}", tr = "\u{2557}", bl = "\u{255A}", br = "\u{255D}", h = "\u{2550}", v = "\u{2551}" },
 }
 
+local FRAME_COLOR = { r = 0x6c, g = 0x70, b = 0x86 }
+local BOLD = "\27[1m"
+local BOLD_OFF = "\27[22m"
+
 function Frame(pane, title, border_style)
-	local ch = FRAME_CHARS[border_style] or FRAME_CHARS.bold
+	local ch = FRAME_CHARS[border_style] or FRAME_CHARS.normal
 	local w, h = pane.w, pane.h
 	if w < 2 or h < 2 then return end
+
+	local color = fg_seq(FRAME_COLOR)
 
 	local inner = w - 2
 	local label = ""
@@ -168,14 +174,15 @@ function Frame(pane, title, border_style)
 	local fill_n = math.max(inner - pre_n - #label, 0)
 	local pre = string.rep(ch.h, pre_n)
 	local fill = string.rep(ch.h, fill_n)
-	emit(goto_rc(pane.y + 1, pane.x + 1) .. ch.tl .. pre .. label .. fill .. ch.tr)
+	local label_styled = (label ~= "") and (BOLD .. label .. BOLD_OFF) or label
+	emit(goto_rc(pane.y + 1, pane.x + 1) .. color .. ch.tl .. pre .. label_styled .. fill .. ch.tr .. RESET)
 
 	for row = 1, h - 2 do
-		emit(goto_rc(pane.y + 1 + row, pane.x + 1) .. ch.v)
-		emit(goto_rc(pane.y + 1 + row, pane.x + w) .. ch.v)
+		emit(goto_rc(pane.y + 1 + row, pane.x + 1) .. color .. ch.v .. RESET)
+		emit(goto_rc(pane.y + 1 + row, pane.x + w) .. color .. ch.v .. RESET)
 	end
 
-	emit(goto_rc(pane.y + h, pane.x + 1) .. ch.bl .. string.rep(ch.h, math.max(inner, 0)) .. ch.br)
+	emit(goto_rc(pane.y + h, pane.x + 1) .. color .. ch.bl .. string.rep(ch.h, math.max(inner, 0)) .. ch.br .. RESET)
 end
 -- >}
 
@@ -665,7 +672,7 @@ local function main()
 		end
 		emit(CLEAR_SCREEN)
 		for i, outer in ipairs(outers) do
-			Frame(outer, mods[i].title, "bold")
+			Frame(outer, mods[i].title, "normal")
 		end
 		flush_output()
 

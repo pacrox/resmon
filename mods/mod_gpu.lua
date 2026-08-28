@@ -9,7 +9,7 @@
 -- "Total fdinfo" (per-process GPU engine usage, summed across all processes)
 -- is populated regardless, since it comes from DRM/GEM fdinfo accounting,
 -- not perf counters -- it is used here instead, and doubles as the
--- process-level 3D/LLM engine breakdown.
+-- process-level GFX/LLM engine breakdown.
 
 local refresh_rate = 0.5
 
@@ -59,27 +59,6 @@ local function usage_percent(json, used_key, total_key) -- >{
 	return used / total * 100
 end -- >}
 
--- "totals" is the pre-scoped "Total fdinfo" object (summed GPU engine usage
--- across all processes); fetch(json, totals) lets a resource pick either
--- source without re-scanning the JSON for "Total fdinfo" every time.
-local resource_list = { -- >{
-	{ label = "3D", fetch = function(json, totals)
-		return totals and extract_field(totals, "GFX")
-	end },
-	{ label = "LLM", fetch = function(json, totals)
-		return totals and extract_field(totals, "Compute")
-	end },
-	{ label = "MEDIA", fetch = function(json, totals)
-		return totals and extract_field(totals, "Media")
-	end },
-	{ label = "VRAM", fetch = function(json)
-		return usage_percent(json, "Total VRAM Usage", "Total VRAM")
-	end },
-	{ label = "GTT", fetch = function(json)
-		return usage_percent(json, "Total GTT Usage", "Total GTT")
-	end },
-} -- >}
-
 local bars_color = { -- >{
 	{ r = 134, g = 190, b = 67 },  -- green, #86be43
 	{ r = 230, g = 200, b = 60 },  -- yellow
@@ -87,7 +66,35 @@ local bars_color = { -- >{
 	{ r = 220, g = 70, b = 70 },   -- red
 } -- >}
 
-local LABEL_W = 8
+-- GFX/LLM/VID are single fixed colors (not value-banded, unlike VRAM/GTT
+-- below): passing a plain {r,g,b} table instead of a color array makes
+-- BandColor() return it unchanged regardless of value.
+local COLOR_GFX = { r = 230, g = 140, b = 40 } -- orange
+local COLOR_LLM = { r = 70, g = 150, b = 255 } -- blue
+local COLOR_VID = { r = 60, g = 200, b = 200 } -- cyan
+
+-- "totals" is the pre-scoped "Total fdinfo" object (summed GPU engine usage
+-- across all processes); fetch(json, totals) lets a resource pick either
+-- source without re-scanning the JSON for "Total fdinfo" every time.
+local resource_list = { -- >{
+	{ label = "GFX", color = COLOR_GFX, fetch = function(json, totals)
+		return totals and extract_field(totals, "GFX")
+	end },
+	{ label = "LLM", color = COLOR_LLM, fetch = function(json, totals)
+		return totals and extract_field(totals, "Compute")
+	end },
+	{ label = "VID", color = COLOR_VID, fetch = function(json, totals)
+		return totals and extract_field(totals, "Media")
+	end },
+	{ label = "VRAM", color = bars_color, fetch = function(json)
+		return usage_percent(json, "Total VRAM Usage", "Total VRAM")
+	end },
+	{ label = "GTT", color = bars_color, fetch = function(json)
+		return usage_percent(json, "Total GTT Usage", "Total GTT")
+	end },
+} -- >}
+
+local LABEL_W = 6 -- blank + up to 4 chars of label + blank, before the Y axis
 
 local function pad(s, w) -- >{
 	s = tostring(s)
@@ -148,9 +155,9 @@ local function redraw(pane) -- >{
 		local value = res.fetch(snap, totals) or 0
 		local block_h = (i == #resource_list) and (content_h - bars_h) or base_block_h
 		local y = pane.y + bars_h
-		WriteAt(pane.x, y + math.floor(block_h / 2), pad(res.label:upper(), LABEL_W))
+		WriteAt(pane.x, y + math.floor(block_h / 2), " " .. pad(res.label:upper(), 4))
 		local bar_pane = { x = bar_x, y = y, w = bar_w, h = block_h }
-		Bar(bar_pane, value, 0, 100, "horizontal", bars_color)
+		Bar(bar_pane, value, 0, 100, "horizontal", res.color)
 		bars_h = bars_h + block_h
 	end
 

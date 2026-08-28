@@ -9,7 +9,13 @@ local bar_color = { -- >{
 } -- >}
 
 local LABEL = "RAM"
-local LABEL_W = 4
+local LABEL_W = 6 -- blank + up to 4 chars of label + blank, before the Y axis
+
+local function pad(s, w) -- >{
+	s = tostring(s)
+	if #s > w then return s:sub(1, w) end
+	return s .. string.rep(" ", w - #s)
+end -- >}
 
 local function read_mem_percent() -- >{
 	local raw = ReadProcFile("/proc/meminfo")
@@ -37,7 +43,7 @@ local function redraw(pane) -- >{
 
 	local bar_pane = { x = bar_x, y = pane.y, w = bar_w, h = bar_h }
 	Bar(bar_pane, pct, 0, 100, "horizontal", bar_color)
-	WriteAt(pane.x, pane.y + math.floor(bar_h / 2), LABEL)
+	WriteAt(pane.x, pane.y + math.floor(bar_h / 2), " " .. pad(LABEL, 4))
 
 	if has_axis then
 		local xticks = Pow2Ticks(0, 100, math.max(1, math.floor(bar_w / 8)))
