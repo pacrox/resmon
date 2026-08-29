@@ -33,6 +33,21 @@ at runtime — LuaJIT is linked in statically.
 `mod_gpu` and `mod_gpu_graph` require the `amdgpu_top` tool on `$PATH` and an
 AMD GPU; every other module reads directly from `/proc` and `/sys` via FFI.
 
+### Module compatibility
+
+| Module | OS/Arch | Source | Depend. | Notes |
+|---|---|---|---|---|
+| `cpu` | Linux (any arch) | `/proc/loadavg` | — | — |
+| `mem` | Linux (any arch) | `/proc/meminfo` | — | — |
+| `top` | Linux/x86-64 | `/proc/[pid]/stat`<br>`/proc/[pid]/status`<br>`/etc/passwd` | — | Assumes `CLK_TCK=100` (glibc default) |
+| `mod_cpu_cores` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
+| `mod_cpu_cores_graph` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
+| `mod_cpu_pulse` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
+| `mod_temp_graph` | Linux/AMD | hwmon `k10temp` (CPU)<br>hwmon `amdgpu` (GPU) | — | Both sides are AMD-only; no Intel `coretemp` fallback (CPU) |
+| `mod_clock_graph` | Linux (any arch)<br>+AMD (GPU) | `cpu0/cpufreq/*` (CPU)<br>hwmon `amdgpu` sclk + `pp_dpm_sclk` (GPU) | — | CPU side is generic but tracks `cpu0` frequency only, not per-core; GPU side is AMD-only |
+| `mod_gpu` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | GRBM% reads 0 without perf-counter access |
+| `mod_gpu_graph` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | First sample after (re)spawn always reads 0 |
+
 ## Screenshots
 
 <table>
