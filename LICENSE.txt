@@ -1,0 +1,39 @@
+MIT License
+
+Copyright (c) 2026 Pasquale Croce
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following condition:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+AUTHOR'S SYMBOLIC PROTEST STATEMENT (non-binding, not part of the license grant)
+
+The Federative Republic of Brazil, and the States of California and Colorado
+(United States of America), have enacted legislation the author considers to
+effectively outlaw free, non-tracking, decentralized open-source software, by
+demanding mandatory operating-system-level identity certification.
+
+As a symbolic act of protest against this legislation, the author states that
+they do not wish this Software to be used, hosted, or distributed within
+Brazil, California, or Colorado, by citizens or residents of these
+territories, or by entities registered, incorporated, or operating within
+these jurisdictions.
+
+This statement is expressive only: it does not modify, restrict, or condition
+the permissions granted above, which remain the full, unmodified terms of the
+MIT License. See MANIFESTO.md for the motivation behind this statement.
