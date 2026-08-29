@@ -145,6 +145,10 @@ return {
 See `config/config.lua.example` for a working starting point.
 
 
+## Contributing
+
+Code development contributions are welcome.
+
 ## A Note on Licensing and Protest
 
 The author notes that the Federative Republic of Brazil, the State of California,
