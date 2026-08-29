@@ -56,12 +56,12 @@ AMD GPU; every other module reads directly from `/proc` and `/sys` via FFI.
 
 <table>
 <tr>
+<td><img src="images/demo.gif" width="100%"></td>
 <td><img src="images/img1.png" width="100%"></td>
 <td><img src="images/img2.png" width="100%"></td>
-<td><img src="images/img3.png" width="100%"></td>
 </tr>
 <tr>
-<td><img src="images/img4.png" width="100%"></td>
+<td><img src="images/img3.png" width="100%"></td>
 <td><img src="images/img5.png" width="100%"></td>
 <td><img src="images/img6.png" width="100%"></td>
 </tr>
