@@ -72,17 +72,10 @@ end -- >}
 -- draws one column: a real core's bar, or a synthetic interpolated one
 -- (width 1, value = average of its two neighbors) inserted to fill the
 -- remainder of the pane width -- see the gap-insertion comment in redraw().
-local function draw_column(pane, bar_h, show_axis, x, w, v) -- >{
+local function draw_column(pane, bar_h, x, w, v) -- >{
 	if w <= 0 then return end
 	local bar_pane = { x = x, y = pane.y, w = w, h = bar_h }
 	Bar(bar_pane, v, SCALE_MIN, SCALE_MAX, "vertical", bars_colors)
-	if show_axis then
-		local label = string.format("%.0f", v)
-		local pad_left = math.max(math.floor((w - #label) / 2), 0)
-		label = string.rep(" ", pad_left) .. label
-		label = label .. string.rep(" ", math.max(w - #label, 0))
-		WriteAt(x, pane.y + bar_h + 1, label)
-	end
 end -- >}
 
 local function core_usage_percents() -- >{
@@ -170,11 +163,11 @@ local function redraw(pane) -- >{
 
 	local x = bars_x
 	for i, core in ipairs(pulse) do
-		draw_column(pane, bar_h, show_axis, x, base_w, core.v)
+		draw_column(pane, bar_h, x, base_w, core.v)
 		x = x + base_w
 		if gap_insert[i] then
 			local avg_v = (core.v + pulse[i + 1].v) / 2
-			draw_column(pane, bar_h, show_axis, x, 1, avg_v)
+			draw_column(pane, bar_h, x, 1, avg_v)
 			x = x + 1
 		end
 	end
