@@ -26,7 +26,10 @@ at runtime — LuaJIT is linked in statically.
 - `mod_cpu_pulse` — per-core usage, mirrored bars forming a symmetric pulse
   shape with the busiest core at the center.
 - `mod_temp_graph` — CPU/GPU temperature, scrolling history graph.
-- `mod_clock_graph` — CPU/GPU clock frequency, scrolling history graph.
+- `mod_clock_graph` — per-core CPU clock frequency (one blue shade per core)
+  plus optional GPU clock (magenta, always drawn on top), scrolling history graph.
+- `mod_clock_avg_graph` — average CPU clock frequency across all cores plus
+  optional GPU clock, scrolling history graph.
 - `mod_gpu` — GPU resource usage bars (via `amdgpu_top -J`).
 - `mod_gpu_graph` — GPU engine/performance-counter usage, scrolling history graph (via `amdgpu_top -J`).
 
@@ -44,7 +47,8 @@ AMD GPU; every other module reads directly from `/proc` and `/sys` via FFI.
 | `mod_cpu_cores_graph` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
 | `mod_cpu_pulse` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
 | `mod_temp_graph` | Linux/AMD | hwmon `k10temp` (CPU)<br>hwmon `amdgpu` (GPU) | — | Both sides are AMD-only; no Intel `coretemp` fallback (CPU) |
-| `mod_clock_graph` | Linux (any arch)<br>+AMD (GPU) | `cpu0/cpufreq/*` (CPU)<br>hwmon `amdgpu` sclk + `pp_dpm_sclk` (GPU) | — | CPU side is generic but tracks `cpu0` frequency only, not per-core; GPU side is AMD-only |
+| `mod_clock_graph` | Linux (any arch)<br>+AMD (GPU) | `cpuN/cpufreq/*` (CPU, per-core)<br>hwmon `amdgpu` sclk + `pp_dpm_sclk` (GPU) | — | GPU optional (`show_gpu`, default `true`); GPU side is AMD-only; GPU line always drawn on top of CPU lines |
+| `mod_clock_avg_graph` | Linux (any arch)<br>+AMD (GPU) | `cpuN/cpufreq/*` (CPU, averaged)<br>hwmon `amdgpu` sclk + `pp_dpm_sclk` (GPU) | — | GPU optional (`show_gpu`, default `true`); single averaged CPU line instead of per-core |
 | `mod_gpu` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | GRBM% reads 0 without perf-counter access |
 | `mod_gpu_graph` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | First sample after (re)spawn always reads 0 |
 
@@ -132,6 +136,11 @@ return {
   remaining space split proportionally among the rest.
 - `refresh`: overrides a module's default refresh delay in seconds. Ignored
   by modules with a fixed delay (e.g. `cpu`'s load-average module).
+- any other field is passed through to a custom module as its own config
+  entry (received as the module's Lua varargs, `...`), so a module can define
+  additional options of its own — e.g. `mod_clock_graph`/`mod_clock_avg_graph`
+  accept `show_gpu = false` to drop the GPU line. See each module's source
+  for the options it supports.
 
 See `config/config.lua.example` for a working starting point.
 

@@ -475,7 +475,7 @@ end
 -- >}
 
 -- CLI argument parsing >{
-local VERSION = "0.2.0"
+local VERSION = "0.2.1"
 
 local function print_usage()
 	io.write("Usage: resmon [options]\n\n")
@@ -561,7 +561,10 @@ local function resolve_module(entry, modules_dir)
 	local path = modules_dir .. "/" .. entry.name .. ".lua"
 	local chunk, err = loadfile(path)
 	if not chunk then return nil, err end
-	local ok, mod = pcall(chunk)
+	-- the config entry is passed through as the chunk's varargs (`...`), so a
+	-- custom module can read its own config fields beyond the generic
+	-- "refresh"/"weight" ones core.lua already handles itself
+	local ok, mod = pcall(chunk, entry)
 	if not ok then return nil, mod end
 	return mod
 end

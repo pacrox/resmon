@@ -1,27 +1,26 @@
--- Custom module: per-core CPU clock frequency history plus GPU core clock,
--- scrolling right-to-left, same rendering style as CPU Cores Graph (sextant
--- resolution, monochrome shade palette, one shade per core) but in blue
--- instead of green, with the GPU line in magenta drawn last so it always
--- stays on top where it overlaps a CPU line, regardless of shade brightness.
--- The Y scale spans the lower of all cores'/the GPU's minimum frequency to
--- the higher of their maximum, both discovered dynamically at module load
--- instead of being hardcoded, so it always matches the actual hardware.
+-- Custom module: average CPU core clock frequency (across all cores) plus
+-- optional GPU core clock, history scrolling right-to-left, same rendering
+-- style as TEMP Graph (sextant resolution, brightness wins on overlap) with
+-- two fixed colors: CPU in blue, GPU in magenta. The Y scale spans the lower
+-- of the tracked devices' minimum frequency to the higher of their maximum,
+-- both discovered dynamically at module load instead of being hardcoded, so
+-- it always matches the actual hardware.
 --
 -- Data source: sysfs, read directly via FFI (ReadProcFile) -- no external
 -- tool needed. CPU: /sys/devices/system/cpu/cpuN/cpufreq (scaling_cur_freq,
--- cpuinfo_min_freq, cpuinfo_max_freq, all in kHz), one per core, core ids
--- discovered from /proc/stat at module load. GPU: the amdgpu hwmon node's
--- freq1_input (Hz, "sclk" per freq1_label) for the current value, and its
--- device/pp_dpm_sclk text listing for the min/max DPM levels -- both
--- reachable through the same driver-name-resolved hwmon path used by TEMP
--- Graph, so no hardcoded "cardN" path is needed.
+-- cpuinfo_min_freq, cpuinfo_max_freq, all in kHz), one per core, averaged
+-- together every tick; core ids discovered from /proc/stat at module load.
+-- GPU: the amdgpu hwmon node's freq1_input (Hz, "sclk" per freq1_label) for
+-- the current value, and its device/pp_dpm_sclk text listing for the min/max
+-- DPM levels -- both reachable through the same driver-name-resolved hwmon
+-- path used by TEMP Graph, so no hardcoded "cardN" path is needed.
 
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
 -- config entry is passed through by core.lua as the chunk's varargs; set
 -- `show_gpu = false` in config.lua to drop the GPU line entirely (and its
--- range from the Y scale), leaving only the per-core CPU lines.
+-- range from the Y scale), leaving only the averaged CPU line.
 local opts = ... or {}
 local SHOW_GPU = opts.show_gpu ~= false
 
@@ -43,7 +42,8 @@ end -- >}
 
 -- core ids aren't guaranteed contiguous/starting at 0 in theory, but /proc/stat
 -- is the same discovery source every other per-core module (CPU Cores, CPU
--- Cores Graph, CPU Pulse) uses, so this stays consistent with them.
+-- Cores Graph, CPU Pulse, CLOCK Frequency Graph) uses, so this stays
+-- consistent with them.
 local function discover_cpu_ids() -- >{
 	local ids = {}
 	local raw = ReadProcFile("/proc/stat")
@@ -73,8 +73,6 @@ end -- >}
 local gpu_hwmon = SHOW_GPU and find_hwmon_path("amdgpu")
 local GPU_CUR_PATH = gpu_hwmon and (gpu_hwmon .. "/freq1_input")
 local GPU_DPM_PATH = gpu_hwmon and (gpu_hwmon .. "/device/pp_dpm_sclk")
-local GPU_ID = "gpu" -- sentinel key, distinct from any numeric core id
-local GPU_COLOR = { r = 230, g = 90, b = 230 } -- magenta
 
 local function read_khz_as_ghz(path) -- >{
 	local raw = path and ReadProcFile(path)
@@ -86,6 +84,22 @@ local function read_hz_as_ghz(path) -- >{
 	local raw = path and ReadProcFile(path)
 	local hz = raw and tonumber(raw:match("%d+"))
 	return hz and (hz / 1e9) or nil
+end -- >}
+
+-- averages every core's current frequency into a single value; a core whose
+-- reading fails (transient sysfs hiccup) is simply skipped rather than
+-- treated as 0, so it does not drag the average down artificially.
+local function read_cpu_avg_ghz() -- >{
+	local sum, n = 0, 0
+	for _, id in ipairs(cpu_ids) do
+		local v = read_khz_as_ghz(cpu_cur_path(id))
+		if v then
+			sum = sum + v
+			n = n + 1
+		end
+	end
+	if n == 0 then return nil end
+	return sum / n
 end -- >}
 
 -- parses "N: <freq>Mhz [*]" lines from pp_dpm_sclk, returning the lowest and
@@ -106,7 +120,8 @@ local function read_gpu_range() -- >{
 end -- >}
 
 -- global min/max across every core (not just one), so a heterogeneous CPU
--- (e.g. mixed performance/efficiency cores) is still scaled correctly.
+-- (e.g. mixed performance/efficiency cores) still scales the averaged line
+-- correctly.
 local cpu_min, cpu_max = nil, nil
 for _, id in ipairs(cpu_ids) do
 	local lo = read_khz_as_ghz(cpu_min_path(id))
@@ -129,39 +144,14 @@ else
 	SCALE_MAX = cpu_max
 end
 
--- monochrome palette: one shade per core, linearly interpolated between a
--- dark and a light endpoint of the same blue hue (same construction as CPU
--- Cores Graph's green palette). GRAPH_PALETTE_SIZE colors are generated
--- regardless of the actual core count; pick_color cycles through them if
--- there are more cores than entries.
-local GRAPH_DARK = { r = 20, g = 50, b = 110 }   -- darkest, navy
-local GRAPH_LIGHT = { r = 180, g = 215, b = 255 } -- palest, sky blue
-local GRAPH_PALETTE_SIZE = 20
-
-local function lerp_color(a, b, t) -- >{
-	return {
-		r = math.floor(a.r + (b.r - a.r) * t + 0.5),
-		g = math.floor(a.g + (b.g - a.g) * t + 0.5),
-		b = math.floor(a.b + (b.b - a.b) * t + 0.5),
-	}
-end -- >}
-
--- id 0 (cpu0) gets the lightest shade, the highest id gets the darkest --
--- interpolation runs light-to-dark as i increases, opposite of the
--- endpoints' own naming.
-local function build_palette() -- >{
-	local t = {}
-	for i = 0, GRAPH_PALETTE_SIZE - 1 do
-		t[i + 1] = lerp_color(GRAPH_LIGHT, GRAPH_DARK, i / (GRAPH_PALETTE_SIZE - 1))
-	end
-	return t
-end -- >}
-
-local graphs_color = build_palette()
-
-local function pick_color(id) -- >{
-	return graphs_color[(id % #graphs_color) + 1]
-end -- >}
+local params = { -- >{
+	{ id = 1, label = "CPU", color = { r = 70, g = 150, b = 255 }, -- blue
+		read = read_cpu_avg_ghz },
+} -- >}
+if SHOW_GPU then
+	params[#params + 1] = { id = 2, label = "GPU", color = { r = 230, g = 90, b = 230 }, -- magenta
+		read = function() return read_hz_as_ghz(GPU_CUR_PATH) end }
+end
 
 -- raw sysfs readings are noisy tick to tick; smoothing before plotting
 -- keeps the curve reading as a smooth line, same as the other graphs.
@@ -236,11 +226,8 @@ local function brightness(c) -- >{
 end -- >}
 
 -- marks a single sub-cell (slot = half-cell column index, level = sub-row
--- from the bottom) in the shared grid. force=true (used for the GPU's line,
--- drawn last) always overwrites the cell's color regardless of brightness,
--- so the GPU line stays visible on top of any CPU core line it crosses;
--- without force, the brighter color wins on overlap, same as CPU Cores Graph.
-local function mark_point(grid, vres, slot, level, color, force) -- >{
+-- from the bottom) in the shared grid.
+local function mark_point(grid, vres, slot, level, color) -- >{
 	local global_row = vres - 1 - level
 	local row = math.floor(global_row / 3)
 	local p = global_row % 3
@@ -249,7 +236,9 @@ local function mark_point(grid, vres, slot, level, color, force) -- >{
 	local bitpos = p * 2 + sub_c
 	local cell = grid[row][col]
 	cell.mask = ffi_bit.bor(cell.mask, ffi_bit.lshift(1, bitpos))
-	if force or not cell.color or brightness(color) > brightness(cell.color) then
+	-- the brighter color always wins where the two lines overlap, regardless
+	-- of which one reaches this cell first or last
+	if not cell.color or brightness(color) > brightness(cell.color) then
 		cell.color = color
 	end
 end -- >}
@@ -260,17 +249,17 @@ end -- >}
 -- those 2 columns, splitting the intervening rows so the ones closer to
 -- the previous sample use its column and the ones closer to the new
 -- sample use the new column -- the standard steep-line Bresenham case.
-local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color, force) -- >{
+local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color) -- >{
 	local steps = math.abs(level - prev_level)
 	if steps == 0 then
-		mark_point(grid, vres, slot, level, color, force)
+		mark_point(grid, vres, slot, level, color)
 		return
 	end
 	local dir = (level > prev_level) and 1 or -1
 	for i = 0, steps do
 		local l = prev_level + dir * i
 		local s = (i / steps < 0.5) and prev_slot or slot
-		mark_point(grid, vres, s, l, color, force)
+		mark_point(grid, vres, s, l, color)
 	end
 end -- >}
 
@@ -284,33 +273,27 @@ local function build_grid(graph_w, graph_h, now) -- >{
 	local sample_cols = graph_w * 2
 	local vres = graph_h * 3
 
-	local function plot(id, color, force)
-		local h = history[id]
-		if not h then return end
-		local prev_slot, prev_level = nil, nil
-		for slot = 0, sample_cols - 1 do
-			local seconds_ago = time_interval * (1 - slot / sample_cols)
-			local v = value_at_time(h, now - seconds_ago)
-			if v ~= nil then
-				local frac = (v - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)
-				local level = math.floor(frac * (vres - 1) + 0.5)
-				if prev_slot ~= nil then
-					mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color, force)
+	for _, param in ipairs(params) do
+		local h = history[param.id]
+		if h then
+			local prev_slot, prev_level = nil, nil
+			for slot = 0, sample_cols - 1 do
+				local seconds_ago = time_interval * (1 - slot / sample_cols)
+				local v = value_at_time(h, now - seconds_ago)
+				if v ~= nil then
+					local frac = (v - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)
+					local level = math.floor(frac * (vres - 1) + 0.5)
+					if prev_slot ~= nil then
+						mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, param.color)
+					else
+						mark_point(grid, vres, slot, level, param.color)
+					end
+					prev_slot, prev_level = slot, level
 				else
-					mark_point(grid, vres, slot, level, color, force)
+					prev_slot, prev_level = nil, nil
 				end
-				prev_slot, prev_level = slot, level
-			else
-				prev_slot, prev_level = nil, nil
 			end
 		end
-	end
-
-	for _, id in ipairs(cpu_ids) do
-		plot(id, pick_color(id), false)
-	end
-	if SHOW_GPU then
-		plot(GPU_ID, GPU_COLOR, true) -- drawn last, always on top
 	end
 
 	return grid
@@ -319,25 +302,17 @@ end -- >}
 local function redraw(pane) -- >{
 	local now = MonotonicNow()
 
-	for _, id in ipairs(cpu_ids) do
-		local v = read_khz_as_ghz(cpu_cur_path(id))
+	for _, param in ipairs(params) do
+		local v = param.read()
 		if v ~= nil then
+			-- clamp into the fixed display range right away so an
+			-- out-of-range reading can never push a plotted point outside
+			-- the grid
 			v = clamp(v, SCALE_MIN, SCALE_MAX)
-			local prev = smoothed[id]
+			local prev = smoothed[param.id]
 			local ema = prev and (SMOOTHING_ALPHA * v + (1 - SMOOTHING_ALPHA) * prev) or v
-			smoothed[id] = ema
-			push_sample(id, ema, now)
-		end
-	end
-
-	if SHOW_GPU then
-		local v = read_hz_as_ghz(GPU_CUR_PATH)
-		if v ~= nil then
-			v = clamp(v, SCALE_MIN, SCALE_MAX)
-			local prev = smoothed[GPU_ID]
-			local ema = prev and (SMOOTHING_ALPHA * v + (1 - SMOOTHING_ALPHA) * prev) or v
-			smoothed[GPU_ID] = ema
-			push_sample(GPU_ID, ema, now)
+			smoothed[param.id] = ema
+			push_sample(param.id, ema, now)
 		end
 	end
 
@@ -377,7 +352,7 @@ local function redraw(pane) -- >{
 end -- >}
 
 return { -- >{
-	title = "CLOCK Frequency Graph",
+	title = "CLOCK Frequency Avg Graph",
 	min_w = 20,
 	min_h = 8,
 	default_delay = refresh_rate,
