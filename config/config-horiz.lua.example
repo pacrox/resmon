@@ -1,0 +1,23 @@
+-- Full-featured example resmon configuration -- CPU Cores Graph, GPU Graph,
+-- CLOCK Frequency Graph (CPU only), CLOCK Frequency Avg Graph, TEMP Graph,
+-- CPU Pulse, MEM, GPU Monitor, CPU Load, Top Processes.
+-- Copy to ~/.config/resmon/config.lua (or point --config-file at a copy of this).
+-- See config.lua.example for a minimal starting point and a reference of
+-- what each field ("name", "weight", "refresh") does.
+
+return { -- >{
+	orientation = "horizontal",
+
+	modules = {
+		{ name = "mod_cpu_cores_graph", weight = 1 },
+		{ name = "mod_gpu_graph", weight = 1 },
+		{ name = "mod_clock_graph", weight = 1, show_gpu = false },
+		{ name = "mod_clock_avg_graph", weight = 1 },
+		{ name = "mod_temp_graph", weight = 1 },
+		{ name = "mod_cpu_pulse", weight = 1 },
+		{ name = "mod_gpu", weight = 1 },
+		{ name = "top", weight = 1 },
+	},
+} -- >}
+
+-- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

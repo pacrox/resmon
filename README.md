@@ -142,7 +142,10 @@ return {
   accept `show_gpu = false` to drop the GPU line. See each module's source
   for the options it supports.
 
-See `config/config.lua.example` for a working starting point.
+See `config/config.lua.example` for a minimal starting point,
+`config/config-full.lua.example` for a fuller vertical setup exercising most
+modules at once, or `config/config-horiz.lua.example` for the same set of
+modules laid out horizontally instead.
 
 
 ## Contributing
