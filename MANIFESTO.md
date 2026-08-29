@@ -9,7 +9,9 @@ This software is licensed under the terms of the MIT License and is technically 
 
 This is a symbolic protest against the local *Age Verification Laws* (such as Brazil's ECA Digital and similar US state mandates). By forcing software developers and operating systems to act as identity gatekeepers, these regulations threaten privacy, destroy digital autonomy, and legally enforce a corporate monopoly over everyday technology.
 
+California and Colorado are both reportedly working on amendments to their respective laws that, hopefully in the near future, will address these concerns. Brazil's government, by contrast, does not yet appear to have acknowledged the risks the law entails — which is why the following, more specific concern applies to Brazil alone.
 
+### Brazil specifically
 
 This short-sighted political calculation will not appease those who seek absolute control. 
 Instead, it merely alienates and disillusions the very progressive electorate that built this administration, while dangerous normalization is given to an authoritarian surveillance agenda. 
@@ -20,3 +22,5 @@ in the hands of forces eager to revive the darkest chapters of the nation's past
 What was meant to be a historic legacy has instead become a blueprint for capitulation—a bitter compromise that history, and the true giants of past social struggles, will judge severely.
 
 **If you live in these regions, please join the fight to protect digital freedom, or use proprietary tools that comply with your governments' corporate surveillance standards.**
+
+The reasoning behind this manifesto applies, implicitly, to any other country or jurisdiction that adopts similar legislation in the future.
