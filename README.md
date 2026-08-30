@@ -110,6 +110,15 @@ doesn't already exist there. Copy `resmon` itself wherever you like on `$PATH`.
 
 Keys: `Q` / `ESC` — quit. `P` — pause/resume data fetching (frame stays drawn).
 
+## Terminal recommendations
+
+resmon's own CPU usage is low, but rendering 24-bit truecolor over a
+high-density grid (small font, large window) puts the load on the terminal
+emulator instead — the render cost scales with cell count, not with resmon.
+GPU-accelerated terminals with a minimal renderer, like `alacritty`, handle
+this well at low overhead; heavier ones (e.g. `wezterm`) cost noticeably more
+per frame at the same grid size.
+
 ## Configuration
 
 `~/.config/resmon/config.lua` returns a Lua table:
