@@ -1,7 +1,12 @@
 -- Custom module: GPU parameters (3D/LLM engine usage plus every GRBM/GRBM2
 -- performance-counter sub-block), scrolling history graph, same rendering
--- style as CPU Cores Graph (overlaid lines, monochrome palette, brightness
--- wins on overlap) but in the #FFD068 hue instead of green.
+-- style as CPU Cores Graph: each visible parameter gets its own unique
+-- shade -- as many shades as visible parameters, no repeats -- assigned by
+-- how close that parameter's own average (over the visible window) sits to
+-- the average of every parameter shown: the closest to the group average is
+-- palest, the farthest is darkest, evenly spread in between. Parameters are
+-- drawn darkest-first so the palest curve always ends up on top where lines
+-- overlap. Same #FFD068 hue throughout instead of CPU Cores Graph's green.
 --
 -- Data source: fetcher "GPU_Top" (fetchers/GPU_Top.lua, shared with mod_gpu
 -- -- one `amdgpu_top -J` process instead of two).
@@ -13,13 +18,9 @@ local _, cache = ...
 
 local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
 
--- monochrome palette: one shade per tracked parameter, linearly interpolated
--- between a dark and a light endpoint of the same #FFD068 hue (same
--- construction as CPU Cores Graph's green palette). "LLM" and "3D" get the
--- two lightest shades (see params order below, palette index follows id);
--- the GRBM/GRBM2 sub-blocks fill the rest of the range down to the darkest.
--- The lighter shade always wins where lines overlap (see mark_point),
--- regardless of draw order.
+-- monochrome value gradient endpoints, dark to #FFD068, same hue
+-- throughout, only brightness varies. The gradient is rebuilt each redraw
+-- with exactly one entry per currently visible parameter (see build_grid).
 local GRAPH_DARK = { r = 127, g = 88, b = 0 }    -- darkest, same hue as #FFD068
 local GRAPH_LIGHT = { r = 255, g = 208, b = 104 } -- #FFD068
 
@@ -31,6 +32,15 @@ local function lerp_color(a, b, t) -- >{
 	}
 end -- >}
 
+local function build_gradient(dark, light, size) -- >{
+	if size <= 1 then return { light } end
+	local t = {}
+	for i = 0, size - 1 do
+		t[i + 1] = lerp_color(dark, light, i / (size - 1))
+	end
+	return t
+end -- >}
+
 local function extract_field(json, key) -- >{
 	local escaped_key = key:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 	local pattern = '"' .. escaped_key .. '"%s*:%s*{%s*"unit"%s*:%s*"[^"]*"%s*,%s*"value"%s*:%s*([%-%d%.eE]+)'
@@ -40,7 +50,8 @@ end -- >}
 -- one tracked GPU parameter per entry; "fetch" receives the already-scoped
 -- "GRBM"/"GRBM2"/"Total fdinfo" sub-objects (nil if absent from a snapshot)
 -- so field names never need to be re-disambiguated against the full JSON.
--- Order matters: it fixes the palette shade via id (darkest first).
+-- `id` only needs to be a stable, unique key into `history`/`smoothed` --
+-- shade assignment no longer depends on it (see build_grid).
 local params = { -- >{
 	{ id = 1, label = "Depth Block", fetch = function(json, ctx)
 		return ctx.grbm and extract_field(ctx.grbm, "Depth Block")
@@ -101,11 +112,6 @@ local params = { -- >{
 	end },
 } -- >}
 
-local graphs_color = {}
-for i = 0, #params - 1 do
-	graphs_color[i + 1] = lerp_color(GRAPH_DARK, GRAPH_LIGHT, i / (#params - 1))
-end
-
 -- raw values are noisy tick to tick; smoothing before plotting keeps the
 -- curve reading as a smooth line instead of a jagged skyline, same as
 -- CPU Cores Graph.
@@ -159,16 +165,10 @@ local function x_tick_labels() -- >{
 	return labels
 end -- >}
 
-local function pick_color(id) -- >{
-	return graphs_color[id]
-end -- >}
-
-local function brightness(c) -- >{
-	return c.r + c.g + c.b
-end -- >}
-
 -- marks a single sub-cell (slot = half-cell column index, level = sub-row
--- from the bottom) in the shared grid.
+-- from the bottom) in the shared grid. Parameters are drawn darkest-first
+-- (see build_grid), so a later (paler) curve simply overwrites an earlier
+-- (darker) one wherever they land on the same cell.
 local function mark_point(grid, vres, slot, level, color) -- >{
 	local global_row = vres - 1 - level
 	local row = math.floor(global_row / 3)
@@ -178,11 +178,7 @@ local function mark_point(grid, vres, slot, level, color) -- >{
 	local bitpos = p * 2 + sub_c
 	local cell = grid[row][col]
 	cell.mask = ffi_bit.bor(cell.mask, ffi_bit.lshift(1, bitpos))
-	-- the lighter shade always wins where lines overlap, regardless of
-	-- which parameter's line reaches this cell first or last
-	if not cell.color or brightness(color) > brightness(cell.color) then
-		cell.color = color
-	end
+	cell.color = color
 end -- >}
 
 -- joins two consecutive samples (one half-cell column apart) with a
@@ -215,27 +211,61 @@ local function build_grid(graph_w, graph_h, now) -- >{
 	local sample_cols = graph_w * 2
 	local vres = graph_h * 3
 
+	-- one pass: collect each parameter's visible-window samples and its own
+	-- average, plus a running sum/count over every parameter's samples
+	-- pooled together for the group average
+	local visible, param_mean = {}, {}
+	local pool_sum, pool_n = 0, 0
 	for _, param in ipairs(params) do
 		local h = history[param.id]
 		if h then
-			local color = pick_color(param.id)
-			local prev_slot, prev_level = nil, nil
+			local samples, sum, n = {}, 0, 0
 			for slot = 0, sample_cols - 1 do
 				local seconds_ago = time_interval * (1 - slot / sample_cols)
 				local v = value_at_time(h, now - seconds_ago)
 				if v ~= nil then
-					local frac = clamp01(v / 100)
-					local level = math.floor(frac * (vres - 1) + 0.5)
-					if prev_slot ~= nil then
-						mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color)
-					else
-						mark_point(grid, vres, slot, level, color)
-					end
-					prev_slot, prev_level = slot, level
-				else
-					prev_slot, prev_level = nil, nil
+					samples[#samples + 1] = { slot = slot, v = v }
+					sum = sum + v
+					n = n + 1
 				end
 			end
+			if n > 0 then
+				visible[param.id] = samples
+				param_mean[param.id] = sum / n
+				pool_sum = pool_sum + sum
+				pool_n = pool_n + n
+			end
+		end
+	end
+	if pool_n == 0 then return grid end
+	local group_mean = pool_sum / pool_n
+
+	-- rank parameters by distance from the group average, farthest first --
+	-- this is both the palette assignment order (darkest to palest) and the
+	-- draw order (darkest drawn first, palest drawn last so it stays on top)
+	local ranked = {}
+	for id in pairs(visible) do ranked[#ranked + 1] = id end
+	table.sort(ranked, function(a, b)
+		local da = math.abs(param_mean[a] - group_mean)
+		local db = math.abs(param_mean[b] - group_mean)
+		if da == db then return a < b end -- stable tie-break, avoids flicker
+		return da > db
+	end)
+
+	local palette = build_gradient(GRAPH_DARK, GRAPH_LIGHT, #ranked)
+
+	for rank, id in ipairs(ranked) do
+		local color = palette[rank]
+		local prev_slot, prev_level = nil, nil
+		for _, s in ipairs(visible[id]) do
+			local level_frac = clamp01(s.v / 100)
+			local level = math.floor(level_frac * (vres - 1) + 0.5)
+			if prev_slot ~= nil and s.slot == prev_slot + 1 then
+				mark_diagonal(grid, vres, prev_slot, prev_level, s.slot, level, color)
+			else
+				mark_point(grid, vres, s.slot, level, color)
+			end
+			prev_slot, prev_level = s.slot, level
 		end
 	end
 

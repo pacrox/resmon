@@ -1,10 +1,15 @@
 -- Custom module: per-core CPU clock frequency history plus GPU core clock,
--- scrolling right-to-left, same rendering style as CPU Cores Graph (sextant
--- resolution, monochrome shade palette, one shade per core) but in blue
--- instead of green, with the GPU line in magenta drawn last so it always
--- stays on top where it overlaps a CPU line, regardless of shade brightness.
--- The Y scale spans the lower of all cores'/the GPU's minimum frequency to
--- the higher of their maximum, both read from the fetchers' data.
+-- scrolling right-to-left, same rendering style as CPU Cores Graph: each
+-- visible core gets its own unique shade -- as many blue shades as visible
+-- cores, no repeats -- assigned by how close that core's own average (over
+-- the visible window) sits to the average of every CPU core shown: the
+-- closest to the group average is palest, the farthest is darkest, evenly
+-- spread in between. Cores are drawn darkest-first so the palest CPU curve
+-- ends up on top of the other CPU lines. The GPU line (fixed pale magenta)
+-- is always drawn last of all, on top of every CPU line regardless of
+-- value. Vertical position (level) uses the shared axis, spanning the lower
+-- of all cores'/the GPU's minimum frequency to the higher of their maximum,
+-- both read from the fetchers' data -- only color is per-core-relative.
 --
 -- Data source: fetcher "CPU_Clock" (fetchers/CPU_Clock.lua), plus fetcher
 -- "GPU_Clock" (fetchers/GPU_Clock.lua) if listed as a second dependency in
@@ -17,18 +22,15 @@ local sChar = require("sextant_chars")
 local _, cache = ...
 
 local GPU_ID = "gpu" -- sentinel key, distinct from any numeric core id
-local GPU_COLOR = { r = 230, g = 90, b = 230 } -- magenta
+local GPU_COLOR = { r = 255, g = 150, b = 255 } -- pale magenta, fixed
 
 local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
 
--- monochrome palette: one shade per core, linearly interpolated between a
--- dark and a light endpoint of the same blue hue (same construction as CPU
--- Cores Graph's green palette). GRAPH_PALETTE_SIZE colors are generated
--- regardless of the actual core count; pick_color cycles through them if
--- there are more cores than entries.
+-- monochrome value gradient endpoints, dark navy to pale sky blue, same hue
+-- throughout, only brightness varies. The gradient is rebuilt each redraw
+-- with exactly one entry per currently visible core (see build_grid).
 local GRAPH_DARK = { r = 20, g = 50, b = 110 }   -- darkest, navy
 local GRAPH_LIGHT = { r = 180, g = 215, b = 255 } -- palest, sky blue
-local GRAPH_PALETTE_SIZE = 20
 
 local function lerp_color(a, b, t) -- >{
 	return {
@@ -38,21 +40,13 @@ local function lerp_color(a, b, t) -- >{
 	}
 end -- >}
 
--- id 0 (cpu0) gets the lightest shade, the highest id gets the darkest --
--- interpolation runs light-to-dark as i increases, opposite of the
--- endpoints' own naming.
-local function build_palette() -- >{
+local function build_gradient(dark, light, size) -- >{
+	if size <= 1 then return { light } end
 	local t = {}
-	for i = 0, GRAPH_PALETTE_SIZE - 1 do
-		t[i + 1] = lerp_color(GRAPH_LIGHT, GRAPH_DARK, i / (GRAPH_PALETTE_SIZE - 1))
+	for i = 0, size - 1 do
+		t[i + 1] = lerp_color(dark, light, i / (size - 1))
 	end
 	return t
-end -- >}
-
-local graphs_color = build_palette()
-
-local function pick_color(id) -- >{
-	return graphs_color[(id % #graphs_color) + 1]
 end -- >}
 
 -- raw sysfs readings are noisy tick to tick; smoothing before plotting
@@ -123,16 +117,11 @@ local function ghz_ticks(min, max, budget) -- >{
 	return ticks
 end -- >}
 
-local function brightness(c) -- >{
-	return c.r + c.g + c.b
-end -- >}
-
 -- marks a single sub-cell (slot = half-cell column index, level = sub-row
--- from the bottom) in the shared grid. force=true (used for the GPU's line,
--- drawn last) always overwrites the cell's color regardless of brightness,
--- so the GPU line stays visible on top of any CPU core line it crosses;
--- without force, the brighter color wins on overlap, same as CPU Cores Graph.
-local function mark_point(grid, vres, slot, level, color, force) -- >{
+-- from the bottom) in the shared grid. CPU cores are drawn darkest-first
+-- and the GPU line (if any) absolute last, so a later curve simply
+-- overwrites an earlier one wherever they land on the same cell.
+local function mark_point(grid, vres, slot, level, color) -- >{
 	local global_row = vres - 1 - level
 	local row = math.floor(global_row / 3)
 	local p = global_row % 3
@@ -141,9 +130,7 @@ local function mark_point(grid, vres, slot, level, color, force) -- >{
 	local bitpos = p * 2 + sub_c
 	local cell = grid[row][col]
 	cell.mask = ffi_bit.bor(cell.mask, ffi_bit.lshift(1, bitpos))
-	if force or not cell.color or brightness(color) > brightness(cell.color) then
-		cell.color = color
-	end
+	cell.color = color
 end -- >}
 
 -- joins two consecutive samples (one half-cell column apart) with a
@@ -152,17 +139,41 @@ end -- >}
 -- those 2 columns, splitting the intervening rows so the ones closer to
 -- the previous sample use its column and the ones closer to the new
 -- sample use the new column -- the standard steep-line Bresenham case.
-local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color, force) -- >{
+local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color) -- >{
 	local steps = math.abs(level - prev_level)
 	if steps == 0 then
-		mark_point(grid, vres, slot, level, color, force)
+		mark_point(grid, vres, slot, level, color)
 		return
 	end
 	local dir = (level > prev_level) and 1 or -1
 	for i = 0, steps do
 		local l = prev_level + dir * i
 		local s = (i / steps < 0.5) and prev_slot or slot
-		mark_point(grid, vres, s, l, color, force)
+		mark_point(grid, vres, s, l, color)
+	end
+end -- >}
+
+-- plots one line (a CPU core or the GPU) with a single fixed `color` for
+-- all of its points, following the shared axis scale for vertical position
+local function plot(grid, vres, sample_cols, now, scale_min, scale_max, id, color) -- >{
+	local h = history[id]
+	if not h then return end
+	local prev_slot, prev_level = nil, nil
+	for slot = 0, sample_cols - 1 do
+		local seconds_ago = time_interval * (1 - slot / sample_cols)
+		local v = value_at_time(h, now - seconds_ago)
+		if v ~= nil then
+			local level_frac = clamp((v - scale_min) / (scale_max - scale_min), 0, 1)
+			local level = math.floor(level_frac * (vres - 1) + 0.5)
+			if prev_slot ~= nil then
+				mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color)
+			else
+				mark_point(grid, vres, slot, level, color)
+			end
+			prev_slot, prev_level = slot, level
+		else
+			prev_slot, prev_level = nil, nil
+		end
 	end
 end -- >}
 
@@ -176,33 +187,55 @@ local function build_grid(graph_w, graph_h, now, scale_min, scale_max, cpu_ids, 
 	local sample_cols = graph_w * 2
 	local vres = graph_h * 3
 
-	local function plot(id, color, force)
+	-- one pass: each core's average over its own visible window, plus a
+	-- running sum/count over every core's samples pooled together for the
+	-- CPU group average (the GPU line never joins this pool -- it's always
+	-- drawn last in a fixed color, see below)
+	local core_mean = {}
+	local pool_sum, pool_n = 0, 0
+	for _, id in ipairs(cpu_ids) do
 		local h = history[id]
-		if not h then return end
-		local prev_slot, prev_level = nil, nil
-		for slot = 0, sample_cols - 1 do
-			local seconds_ago = time_interval * (1 - slot / sample_cols)
-			local v = value_at_time(h, now - seconds_ago)
-			if v ~= nil then
-				local frac = (v - scale_min) / (scale_max - scale_min)
-				local level = math.floor(frac * (vres - 1) + 0.5)
-				if prev_slot ~= nil then
-					mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color, force)
-				else
-					mark_point(grid, vres, slot, level, color, force)
+		if h then
+			local sum, n = 0, 0
+			for slot = 0, sample_cols - 1 do
+				local seconds_ago = time_interval * (1 - slot / sample_cols)
+				local v = value_at_time(h, now - seconds_ago)
+				if v ~= nil then
+					sum = sum + v
+					n = n + 1
 				end
-				prev_slot, prev_level = slot, level
-			else
-				prev_slot, prev_level = nil, nil
+			end
+			if n > 0 then
+				core_mean[id] = sum / n
+				pool_sum = pool_sum + sum
+				pool_n = pool_n + n
 			end
 		end
 	end
 
-	for _, id in ipairs(cpu_ids) do
-		plot(id, pick_color(id), false)
+	if pool_n > 0 then
+		local group_mean = pool_sum / pool_n
+
+		-- rank cores by distance from the group average, farthest first --
+		-- this is both the palette assignment order (darkest to palest) and
+		-- the draw order (darkest drawn first, palest drawn last)
+		local ranked = {}
+		for id in pairs(core_mean) do ranked[#ranked + 1] = id end
+		table.sort(ranked, function(a, b)
+			local da = math.abs(core_mean[a] - group_mean)
+			local db = math.abs(core_mean[b] - group_mean)
+			if da == db then return a < b end -- stable tie-break, avoids flicker
+			return da > db
+		end)
+
+		local palette = build_gradient(GRAPH_DARK, GRAPH_LIGHT, #ranked)
+		for rank, id in ipairs(ranked) do
+			plot(grid, vres, sample_cols, now, scale_min, scale_max, id, palette[rank])
+		end
 	end
+
 	if show_gpu then
-		plot(GPU_ID, GPU_COLOR, true) -- drawn last, always on top
+		plot(grid, vres, sample_cols, now, scale_min, scale_max, GPU_ID, GPU_COLOR) -- drawn last, always on top
 	end
 
 	return grid
