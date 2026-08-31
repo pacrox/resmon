@@ -1,5 +1,7 @@
 -- Base module: CPU load average (1/5/15 minutes)
 
+local _, cache = ...
+
 local bar_colors = { -- >{
 	{ r = 134, g = 190, b = 67 },  -- #86be43
 	{ r = 230, g = 200, b = 60 },
@@ -22,15 +24,9 @@ local function pad(s, w) -- >{
 	return s .. string.rep(" ", w - #s)
 end -- >}
 
-local function read_loadavg() -- >{
-	local raw = ReadProcFile("/proc/loadavg")
-	if not raw then return 0, 0, 0 end
-	local one, five, fifteen = raw:match("^(%S+)%s+(%S+)%s+(%S+)")
-	return tonumber(one) or 0, tonumber(five) or 0, tonumber(fifteen) or 0
-end -- >}
-
 local function redraw(pane) -- >{
-	local values = { read_loadavg() }
+	local data = cache[1] or {}
+	local values = { data.one or 0, data.five or 0, data.fifteen or 0 }
 	local axis_x = pane.x + LABEL_W
 	local bar_x = axis_x + 1
 	local bar_w = math.max(pane.w - LABEL_W - 1 - VALUE_W, 0)
@@ -63,8 +59,6 @@ return { -- >{
 	title = "CPU Load",
 	min_w = 24,
 	min_h = 7,
-	default_delay = 60,
-	fixed_delay = true,
 	redraw = redraw,
 } -- >}
 

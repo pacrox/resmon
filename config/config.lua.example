@@ -1,24 +1,38 @@
 -- Example resmon configuration.
 -- Copy to ~/.config/resmon/config.lua (or point --config-file at a copy of this).
 --
--- "name" for a base module must be one of: cpu, mem, top.
--- Any other "name" is loaded from <modules-dir>/<name>.lua (default: ~/.config/resmon/mods),
--- so it must match the module's filename exactly, e.g. "mod_cpu_cores" for mod_cpu_cores.lua.
--- "weight" controls the proportional share of terminal space (default 1, equal split).
--- A negative "weight" is an exact line count instead of a proportional share, e.g.
--- weight = -10 always gives that module exactly 10 rows (vertical) or columns
--- (horizontal); the remaining space is split proportionally among the rest.
--- "refresh" overrides a module's default refresh delay in seconds (ignored by modules
--- that set fixed_delay = true, e.g. the CPU load average module).
+-- "fetchers": data sources, each fetched once and shared by every module that
+-- depends on it. "name" must be unique; a fetcher unused by any module below
+-- is never loaded. "refresh" is its fetch interval in seconds (ignored by
+-- fetchers that set fixed_delay = true, e.g. the CPU load average fetcher).
+--
+-- "modules": what gets drawn. "name" is this instance's unique id (used only
+-- to report load errors); "mod" is the module to load -- one of the base
+-- modules (cpu, mem, top), or a filename (without .lua) under <modules-dir>
+-- (default: ~/.config/resmon/addons/mods). The same "mod" can be listed more
+-- than once, with different "fetcher"/"weight". "fetcher" is the array of
+-- fetcher names this module reads from, in order -- a module with none is
+-- invalid. "weight" controls the proportional share of terminal space
+-- (default 1, equal split). A negative "weight" is an exact line count
+-- instead, e.g. weight = -10 always gives that module exactly 10 rows
+-- (vertical) or columns (horizontal); the remaining space is split
+-- proportionally among the rest.
 
 return { -- >{
 	orientation = "vertical",
 
+	fetchers = {
+		{ name = "CPU_Average", refresh = 60 },
+		{ name = "MEM", refresh = 1.5 },
+		{ name = "CPU_Cores", refresh = 0.33 },
+		{ name = "TOP", refresh = 1.5 },
+	},
+
 	modules = {
-		{ name = "cpu" },
-		{ name = "mem", weight = 1 },
-		{ name = "mod_cpu_cores", weight = 2 },
-		{ name = "top", weight = 3 },
+		{ name = "cpu", mod = "cpu", fetcher = { "CPU_Average" } },
+		{ name = "mem", mod = "mem", weight = 1, fetcher = { "MEM" } },
+		{ name = "cores", mod = "mod_cpu_cores", weight = 2, fetcher = { "CPU_Cores" } },
+		{ name = "top", mod = "top", weight = 3, fetcher = { "TOP" } },
 	},
 } -- >}
 

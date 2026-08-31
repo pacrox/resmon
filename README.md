@@ -6,18 +6,39 @@ at runtime — LuaJIT is linked in statically.
 
 ## Features
 
-- Low-CPU, fixed-tick main loop; per-module refresh rate.
+- Low-CPU, fixed-tick main loop; data is fetched once per source and shared
+  by every module that depends on it, regardless of how many modules do.
 - 24-bit truecolor rendering (box-drawing frames, block/sextant bars and graphs).
 - Configurable layout: vertical or horizontal split, proportional or fixed-size
   panes (`weight`), driven by a plain Lua config file.
-- Custom modules are loaded as plain-text `.lua` files at startup (no
-  recompilation needed) — the same contract used by the three built-in modules.
+- Custom fetchers and modules are loaded as plain-text `.lua` files at
+  startup (no recompilation needed) — the same contract used by the built-in
+  fetchers and modules.
 
 ### Built-in modules
 
 - `cpu` — load average (1/5/15).
 - `mem` — RAM usage.
 - `top` — process list, row count auto-fit to the pane height.
+
+### Fetchers
+
+Data collection is split from rendering: each fetcher reads one data source
+on its own refresh interval and caches the result; any number of modules can
+read from the same fetcher without it being re-fetched. A fetcher unused by
+any configured module is never loaded.
+
+| Fetcher | OS/Arch | Source | Depend. | Notes |
+|---|---|---|---|---|
+| `CPU_Average` | Linux (any arch) | `/proc/loadavg` | — | Fixed 60s refresh, not overridable |
+| `MEM` | Linux (any arch) | `/proc/meminfo` | — | — |
+| `TOP` | Linux/x86-64 | `/proc/[pid]/stat`<br>`/proc/[pid]/status`<br>`/etc/passwd` | — | Assumes `CLK_TCK=100` (glibc default) |
+| `CPU_Cores` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
+| `CPU_Clock` | Linux (any arch) | `cpuN/cpufreq/*` (per-core) | — | Min/max range discovered once at load |
+| `GPU_Clock` | Linux/AMD | hwmon `amdgpu` sclk + `pp_dpm_sclk` | — | Min/max range discovered once at load |
+| `CPU_Temp` | Linux/AMD | hwmon `k10temp` | — | No Intel `coretemp` fallback |
+| `GPU_Temp` | Linux/AMD | hwmon `amdgpu` | — | — |
+| `GPU_Top` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | One persistent process shared by every module that depends on it; first sample after (re)spawn always reads 0; GRBM% reads 0 without perf-counter access |
 
 ### Custom modules (`mods/`)
 
@@ -27,30 +48,38 @@ at runtime — LuaJIT is linked in statically.
   shape with the busiest core at the center.
 - `mod_temp_graph` — CPU/GPU temperature, scrolling history graph.
 - `mod_clock_graph` — per-core CPU clock frequency (one blue shade per core)
-  plus optional GPU clock (magenta, always drawn on top), scrolling history graph.
+  plus GPU clock (magenta, always drawn on top), scrolling history graph.
 - `mod_clock_avg_graph` — average CPU clock frequency across all cores plus
-  optional GPU clock, scrolling history graph.
+  GPU clock, scrolling history graph.
 - `mod_gpu` — GPU resource usage bars (via `amdgpu_top -J`).
 - `mod_gpu_graph` — GPU engine/performance-counter usage, scrolling history graph (via `amdgpu_top -J`).
 
-`mod_gpu` and `mod_gpu_graph` require the `amdgpu_top` tool on `$PATH` and an
-AMD GPU; every other module reads directly from `/proc` and `/sys` via FFI.
+`mod_gpu` and `mod_gpu_graph` require the `GPU_Top` fetcher (`amdgpu_top` on
+`$PATH`, AMD GPU); every other custom module's fetcher reads directly from
+`/proc` and `/sys` via FFI.
 
-### Module compatibility
+### Modules → fetcher(s)
 
-| Module | OS/Arch | Source | Depend. | Notes |
-|---|---|---|---|---|
-| `cpu` | Linux (any arch) | `/proc/loadavg` | — | — |
-| `mem` | Linux (any arch) | `/proc/meminfo` | — | — |
-| `top` | Linux/x86-64 | `/proc/[pid]/stat`<br>`/proc/[pid]/status`<br>`/etc/passwd` | — | Assumes `CLK_TCK=100` (glibc default) |
-| `mod_cpu_cores` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
-| `mod_cpu_cores_graph` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
-| `mod_cpu_pulse` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
-| `mod_temp_graph` | Linux/AMD | hwmon `k10temp` (CPU)<br>hwmon `amdgpu` (GPU) | — | Both sides are AMD-only; no Intel `coretemp` fallback (CPU) |
-| `mod_clock_graph` | Linux (any arch)<br>+AMD (GPU) | `cpuN/cpufreq/*` (CPU, per-core)<br>hwmon `amdgpu` sclk + `pp_dpm_sclk` (GPU) | — | GPU optional (`show_gpu`, default `true`); GPU side is AMD-only; GPU line always drawn on top of CPU lines |
-| `mod_clock_avg_graph` | Linux (any arch)<br>+AMD (GPU) | `cpuN/cpufreq/*` (CPU, averaged)<br>hwmon `amdgpu` sclk + `pp_dpm_sclk` (GPU) | — | GPU optional (`show_gpu`, default `true`); single averaged CPU line instead of per-core |
-| `mod_gpu` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | GRBM% reads 0 without perf-counter access |
-| `mod_gpu_graph` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | First sample after (re)spawn always reads 0 |
+The GPU line on `mod_clock_graph`/`mod_clock_avg_graph` is optional: include
+`GPU_Clock` in that module instance's `fetcher = {...}` list to show it, omit
+it to draw CPU-only — there is no separate on/off option, the dependency list
+itself is the toggle. `mod_temp_graph` needs both of its fetchers; if they
+refresh at different rates, the graph repeats each one's last value between
+its own updates.
+
+| Module | Fetcher(s) |
+|---|---|
+| `cpu` | `CPU_Average` |
+| `mem` | `MEM` |
+| `top` | `TOP` |
+| `mod_cpu_cores` | `CPU_Cores` |
+| `mod_cpu_cores_graph` | `CPU_Cores` |
+| `mod_cpu_pulse` | `CPU_Cores` |
+| `mod_temp_graph` | `CPU_Temp`, `GPU_Temp` |
+| `mod_clock_graph` | `CPU_Clock` (+ `GPU_Clock` optional) |
+| `mod_clock_avg_graph` | `CPU_Clock` (+ `GPU_Clock` optional) |
+| `mod_gpu` | `GPU_Top` |
+| `mod_gpu_graph` | `GPU_Top` |
 
 ## Screenshots
 
@@ -90,7 +119,8 @@ Linux system, so no separate Lua/LuaJIT install is needed to run it.
 make install-config
 ```
 
-Copies the custom modules from `mods/` into `~/.config/resmon/mods/`, and
+Copies the custom fetchers from `fetchers/` into `~/.config/resmon/addons/fetchers/`
+and the custom modules from `mods/` into `~/.config/resmon/addons/mods/`, and
 installs `config/config.lua.example` as `~/.config/resmon/config.lua` if one
 doesn't already exist there. Copy `resmon` itself wherever you like on `$PATH`.
 
@@ -104,7 +134,8 @@ doesn't already exist there. Copy `resmon` itself wherever you like on `$PATH`.
 |---|---|
 | `--config-dir <path>` | Override the default config dir (`~/.config/resmon`) |
 | `--config-file <path>` | Override the config file path (default: `<config-dir>/config.lua`) |
-| `--modules-dir <path>` | Override the custom modules dir (default: `<config-dir>/mods`) |
+| `--fetchers-dir <path>` | Override the fetchers dir (default: `<config-dir>/addons/fetchers`) |
+| `--modules-dir <path>` | Override the custom modules dir (default: `<config-dir>/addons/mods`) |
 | `-h`, `--help` | Show help and exit |
 | `-v`, `--version` | Show version and exit |
 
@@ -127,29 +158,49 @@ per frame at the same grid size.
 return {
 	orientation = "vertical", -- or "horizontal"
 
+	fetchers = {
+		{ name = "CPU_Average", refresh = 60 },
+		{ name = "MEM", refresh = 1.5 },
+		{ name = "CPU_Cores", refresh = 0.33 },
+	},
+
 	modules = {
-		{ name = "cpu" },
-		{ name = "mem", weight = 1 },
-		{ name = "mod_cpu_cores", weight = 2 },
-		{ name = "top", weight = 3 },
+		{ name = "cpu", mod = "cpu", fetcher = { "CPU_Average" } },
+		{ name = "mem", mod = "mem", weight = 1, fetcher = { "MEM" } },
+		{ name = "cores", mod = "mod_cpu_cores", weight = 2, fetcher = { "CPU_Cores" } },
 	},
 }
 ```
 
-- `name`: one of the built-in modules (`cpu`, `mem`, `top`), or the filename
+`fetchers` — data sources:
+
+- `name`: one of the built-in fetchers (`CPU_Average`, `MEM`, `TOP`), or the
+  filename (without `.lua`) of a fetcher in the fetchers dir, e.g. `CPU_Cores`
+  for `CPU_Cores.lua`. Must be unique; a duplicate is dropped with a warning.
+  A fetcher not referenced by any module below is never loaded.
+- `refresh`: fetch interval in seconds. Ignored by fetchers with a fixed
+  delay (e.g. `CPU_Average`'s load-average fetcher).
+
+`modules` — what gets drawn:
+
+- `name`: this instance's unique id. Only used to report load errors and to
+  match it up internally with its fetcher(s); a duplicate is dropped with a
+  warning.
+- `mod`: one of the built-in modules (`cpu`, `mem`, `top`), or the filename
   (without `.lua`) of a module in the modules dir, e.g. `mod_cpu_cores` for
-  `mod_cpu_cores.lua`.
+  `mod_cpu_cores.lua`. The same `mod` can appear more than once, each time
+  with a different `name`/`fetcher`/`weight`.
+- `fetcher`: array of fetcher names this module reads from, in order. A
+  module needs at least one; one referencing a fetcher that doesn't exist is
+  dropped with a warning.
 - `weight`: proportional share of terminal space (default `1`, equal split).
   A negative weight is an exact size instead — e.g. `weight = -10` always
   gives that module 10 rows (vertical layout) or columns (horizontal), with
   remaining space split proportionally among the rest.
-- `refresh`: overrides a module's default refresh delay in seconds. Ignored
-  by modules with a fixed delay (e.g. `cpu`'s load-average module).
 - any other field is passed through to a custom module as its own config
-  entry (received as the module's Lua varargs, `...`), so a module can define
-  additional options of its own — e.g. `mod_clock_graph`/`mod_clock_avg_graph`
-  accept `show_gpu = false` to drop the GPU line. See each module's source
-  for the options it supports.
+  entry (received as part of the module's Lua varargs, `...`), so a module
+  can define additional options of its own. See each module's source for the
+  options it supports.
 
 See `config/config.lua.example` for a minimal starting point,
 `config/config-full.lua.example` for a fuller vertical setup exercising most

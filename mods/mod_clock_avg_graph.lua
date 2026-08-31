@@ -3,154 +3,39 @@
 -- style as TEMP Graph (sextant resolution, brightness wins on overlap) with
 -- two fixed colors: CPU in blue, GPU in magenta. The Y scale spans the lower
 -- of the tracked devices' minimum frequency to the higher of their maximum,
--- both discovered dynamically at module load instead of being hardcoded, so
--- it always matches the actual hardware.
+-- read from the fetchers' data.
 --
--- Data source: sysfs, read directly via FFI (ReadProcFile) -- no external
--- tool needed. CPU: /sys/devices/system/cpu/cpuN/cpufreq (scaling_cur_freq,
--- cpuinfo_min_freq, cpuinfo_max_freq, all in kHz), one per core, averaged
--- together every tick; core ids discovered from /proc/stat at module load.
--- GPU: the amdgpu hwmon node's freq1_input (Hz, "sclk" per freq1_label) for
--- the current value, and its device/pp_dpm_sclk text listing for the min/max
--- DPM levels -- both reachable through the same driver-name-resolved hwmon
--- path used by TEMP Graph, so no hardcoded "cardN" path is needed.
+-- Data source: fetcher "CPU_Clock" (fetchers/CPU_Clock.lua, averaged across
+-- cores here), plus fetcher "GPU_Clock" (fetchers/GPU_Clock.lua) if listed
+-- as a second dependency in this module's own config entry -- its presence
+-- in `fetcher={...}` is what turns the GPU line on, no separate option
+-- needed.
 
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
--- config entry is passed through by core.lua as the chunk's varargs; set
--- `show_gpu = false` in config.lua to drop the GPU line entirely (and its
--- range from the Y scale), leaving only the averaged CPU line.
-local opts = ... or {}
-local SHOW_GPU = opts.show_gpu ~= false
+local _, cache = ...
 
-local refresh_rate = 0.5
 local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
 
--- hwmon device index isn't stable across systems, only the driver name is;
--- resolved once at module load by scanning hwmon0..hwmon31 for a name match.
-local function find_hwmon_path(driver_name) -- >{
-	for i = 0, 31 do
-		local base = "/sys/class/hwmon/hwmon" .. i
-		local name = ReadProcFile(base .. "/name")
-		if name and name:match("^" .. driver_name .. "%s*$") then
-			return base
-		end
-	end
-	return nil
-end -- >}
-
--- core ids aren't guaranteed contiguous/starting at 0 in theory, but /proc/stat
--- is the same discovery source every other per-core module (CPU Cores, CPU
--- Cores Graph, CPU Pulse, CLOCK Frequency Graph) uses, so this stays
--- consistent with them.
-local function discover_cpu_ids() -- >{
-	local ids = {}
-	local raw = ReadProcFile("/proc/stat")
-	if raw then
-		for id in raw:gmatch("cpu(%d+)") do
-			ids[#ids + 1] = tonumber(id)
-		end
-	end
-	table.sort(ids)
-	return ids
-end -- >}
-
-local cpu_ids = discover_cpu_ids()
-
-local function cpu_cur_path(id) -- >{
-	return "/sys/devices/system/cpu/cpu" .. id .. "/cpufreq/scaling_cur_freq"
-end -- >}
-
-local function cpu_min_path(id) -- >{
-	return "/sys/devices/system/cpu/cpu" .. id .. "/cpufreq/cpuinfo_min_freq"
-end -- >}
-
-local function cpu_max_path(id) -- >{
-	return "/sys/devices/system/cpu/cpu" .. id .. "/cpufreq/cpuinfo_max_freq"
-end -- >}
-
-local gpu_hwmon = SHOW_GPU and find_hwmon_path("amdgpu")
-local GPU_CUR_PATH = gpu_hwmon and (gpu_hwmon .. "/freq1_input")
-local GPU_DPM_PATH = gpu_hwmon and (gpu_hwmon .. "/device/pp_dpm_sclk")
-
-local function read_khz_as_ghz(path) -- >{
-	local raw = path and ReadProcFile(path)
-	local khz = raw and tonumber(raw:match("%d+"))
-	return khz and (khz / 1e6) or nil
-end -- >}
-
-local function read_hz_as_ghz(path) -- >{
-	local raw = path and ReadProcFile(path)
-	local hz = raw and tonumber(raw:match("%d+"))
-	return hz and (hz / 1e9) or nil
-end -- >}
-
--- averages every core's current frequency into a single value; a core whose
--- reading fails (transient sysfs hiccup) is simply skipped rather than
--- treated as 0, so it does not drag the average down artificially.
 local function read_cpu_avg_ghz() -- >{
+	local data = cache[1] or {}
 	local sum, n = 0, 0
-	for _, id in ipairs(cpu_ids) do
-		local v = read_khz_as_ghz(cpu_cur_path(id))
-		if v then
-			sum = sum + v
-			n = n + 1
-		end
+	for _, v in pairs(data.cores or {}) do
+		sum = sum + v
+		n = n + 1
 	end
 	if n == 0 then return nil end
 	return sum / n
 end -- >}
 
--- parses "N: <freq>Mhz [*]" lines from pp_dpm_sclk, returning the lowest and
--- highest listed DPM level in GHz -- there is no cpuinfo_min/max_freq
--- equivalent for amdgpu, so the DPM table is the only source for the GPU's
--- actual supported clock range.
-local function read_gpu_range() -- >{
-	local raw = GPU_DPM_PATH and ReadProcFile(GPU_DPM_PATH)
-	if not raw then return nil, nil end
-	local min_mhz, max_mhz = nil, nil
-	for mhz in raw:gmatch("(%d+)Mhz") do
-		local v = tonumber(mhz)
-		if not min_mhz or v < min_mhz then min_mhz = v end
-		if not max_mhz or v > max_mhz then max_mhz = v end
-	end
-	if not min_mhz then return nil, nil end
-	return min_mhz / 1000, max_mhz / 1000
-end -- >}
-
--- global min/max across every core (not just one), so a heterogeneous CPU
--- (e.g. mixed performance/efficiency cores) still scales the averaged line
--- correctly.
-local cpu_min, cpu_max = nil, nil
-for _, id in ipairs(cpu_ids) do
-	local lo = read_khz_as_ghz(cpu_min_path(id))
-	local hi = read_khz_as_ghz(cpu_max_path(id))
-	if lo then cpu_min = cpu_min and math.min(cpu_min, lo) or lo end
-	if hi then cpu_max = cpu_max and math.max(cpu_max, hi) or hi end
-end
-cpu_min = cpu_min or 0.6
-cpu_max = cpu_max or 5
-
-local SCALE_MIN, SCALE_MAX
-if SHOW_GPU then
-	local gpu_min, gpu_max = read_gpu_range()
-	gpu_min = gpu_min or 0.6
-	gpu_max = gpu_max or 3
-	SCALE_MIN = math.min(cpu_min, gpu_min)
-	SCALE_MAX = math.max(cpu_max, gpu_max)
-else
-	SCALE_MIN = cpu_min
-	SCALE_MAX = cpu_max
-end
-
 local params = { -- >{
 	{ id = 1, label = "CPU", color = { r = 70, g = 150, b = 255 }, -- blue
 		read = read_cpu_avg_ghz },
 } -- >}
-if SHOW_GPU then
+if cache[2] then
 	params[#params + 1] = { id = 2, label = "GPU", color = { r = 230, g = 90, b = 230 }, -- magenta
-		read = function() return read_hz_as_ghz(GPU_CUR_PATH) end }
+		read = function() return cache[2].ghz end }
 end
 
 -- raw sysfs readings are noisy tick to tick; smoothing before plotting
@@ -263,7 +148,7 @@ local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, col
 	end
 end -- >}
 
-local function build_grid(graph_w, graph_h, now) -- >{
+local function build_grid(graph_w, graph_h, now, scale_min, scale_max) -- >{
 	local grid = {}
 	for row = 0, graph_h - 1 do
 		grid[row] = {}
@@ -281,7 +166,7 @@ local function build_grid(graph_w, graph_h, now) -- >{
 				local seconds_ago = time_interval * (1 - slot / sample_cols)
 				local v = value_at_time(h, now - seconds_ago)
 				if v ~= nil then
-					local frac = (v - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)
+					local frac = (v - scale_min) / (scale_max - scale_min)
 					local level = math.floor(frac * (vres - 1) + 0.5)
 					if prev_slot ~= nil then
 						mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, param.color)
@@ -302,13 +187,22 @@ end -- >}
 local function redraw(pane) -- >{
 	local now = MonotonicNow()
 
+	local cpu_data = cache[1] or {}
+	local gpu_data = cache[2]
+	local scale_min = cpu_data.min or 0.6
+	local scale_max = cpu_data.max or 5
+	if gpu_data then
+		scale_min = math.min(scale_min, gpu_data.min or 0.6)
+		scale_max = math.max(scale_max, gpu_data.max or 3)
+	end
+
 	for _, param in ipairs(params) do
 		local v = param.read()
 		if v ~= nil then
 			-- clamp into the fixed display range right away so an
 			-- out-of-range reading can never push a plotted point outside
 			-- the grid
-			v = clamp(v, SCALE_MIN, SCALE_MAX)
+			v = clamp(v, scale_min, scale_max)
 			local prev = smoothed[param.id]
 			local ema = prev and (SMOOTHING_ALPHA * v + (1 - SMOOTHING_ALPHA) * prev) or v
 			smoothed[param.id] = ema
@@ -323,15 +217,15 @@ local function redraw(pane) -- >{
 	local graph_w = math.max(pane.w - AXIS_W - 1, 0)
 	local graph_h = math.max(pane.h - 2, 1)
 
-	local yticks = ghz_ticks(SCALE_MIN, SCALE_MAX, math.max(1, math.floor(graph_h / 4)))
+	local yticks = ghz_ticks(scale_min, scale_max, math.max(1, math.floor(graph_h / 4)))
 	Axis(
 		{ x = axis_x, y = pane.y, w = graph_w, h = graph_h },
 		{ min = -time_interval, max = 0 },
-		{ min = SCALE_MIN, max = SCALE_MAX },
+		{ min = scale_min, max = scale_max },
 		{ x = x_tick_labels(), y = yticks }
 	)
 
-	local grid = build_grid(graph_w, graph_h, now)
+	local grid = build_grid(graph_w, graph_h, now, scale_min, scale_max)
 	for row = 0, graph_h - 1 do
 		local run_col = 0
 		local run_color = grid[row][0].color
@@ -355,7 +249,6 @@ return { -- >{
 	title = "CLOCK Frequency Avg Graph",
 	min_w = 20,
 	min_h = 8,
-	default_delay = refresh_rate,
 	redraw = redraw,
 } -- >}
 

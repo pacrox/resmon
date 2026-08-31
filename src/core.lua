@@ -480,11 +480,12 @@ local VERSION = "0.3.0_dev"
 local function print_usage()
 	io.write("Usage: resmon [options]\n\n")
 	io.write("Options:\n")
-	io.write("  --config-dir <path>    Override the default config dir (~/.config/resmon)\n")
-	io.write("  --config-file <path>   Override the config file path (default: <config-dir>/config.lua)\n")
-	io.write("  --modules-dir <path>   Override the custom modules dir (default: <config-dir>/mods)\n")
-	io.write("  -h, --help             Show this help message and exit\n")
-	io.write("  -v, --version          Show version and exit\n")
+	io.write("  --config-dir <path>     Override the default config dir (~/.config/resmon)\n")
+	io.write("  --config-file <path>    Override the config file path (default: <config-dir>/config.lua)\n")
+	io.write("  --fetchers-dir <path>   Override the fetchers dir (default: <config-dir>/addons/fetchers)\n")
+	io.write("  --modules-dir <path>    Override the custom modules dir (default: <config-dir>/addons/mods)\n")
+	io.write("  -h, --help              Show this help message and exit\n")
+	io.write("  -v, --version           Show version and exit\n")
 end
 
 local function parse_args()
@@ -499,7 +500,7 @@ local function parse_args()
 		elseif flag == "-v" or flag == "--version" then
 			io.write("resmon " .. VERSION .. "\n")
 			os.exit(0)
-		elseif flag == "--config-dir" or flag == "--config-file" or flag == "--modules-dir" then
+		elseif flag == "--config-dir" or flag == "--config-file" or flag == "--fetchers-dir" or flag == "--modules-dir" then
 			local value = a[i + 1]
 			if not value then
 				io.stderr:write("resmon: missing value for " .. flag .. "\n")
@@ -507,6 +508,7 @@ local function parse_args()
 			end
 			if flag == "--config-dir" then opts.config_dir = value
 			elseif flag == "--config-file" then opts.config_file = value
+			elseif flag == "--fetchers-dir" then opts.fetchers_dir = value
 			else opts.modules_dir = value end
 			i = i + 1
 		else
@@ -522,17 +524,28 @@ local function resolve_paths(opts)
 	local home = os.getenv("HOME") or ""
 	local config_dir = opts.config_dir or (home .. "/.config/resmon")
 	local config_file = opts.config_file or (config_dir .. "/config.lua")
-	local modules_dir = opts.modules_dir or (config_dir .. "/mods")
-	return config_file, modules_dir
+	local fetchers_dir = opts.fetchers_dir or (config_dir .. "/addons/fetchers")
+	local modules_dir = opts.modules_dir or (config_dir .. "/addons/mods")
+	return config_file, fetchers_dir, modules_dir
 end
 -- >}
 
--- config and module loading >{
+-- config, fetcher and module loading >{
 local BASE_MODULES = { cpu = true, mem = true, top = true }
+local BASE_FETCHERS = { CPU_Average = true, MEM = true, TOP = true }
 
 local DEFAULT_CONFIG = {
 	orientation = "vertical",
-	modules = { { name = "cpu" }, { name = "mem" }, { name = "top" } },
+	fetchers = {
+		{ name = "CPU_Average", refresh = 60 },
+		{ name = "MEM", refresh = 1.5 },
+		{ name = "TOP", refresh = 1.5 },
+	},
+	modules = {
+		{ name = "cpu", mod = "cpu", fetcher = { "CPU_Average" } },
+		{ name = "mem", mod = "mem", fetcher = { "MEM" } },
+		{ name = "top", mod = "top", fetcher = { "TOP" } },
+	},
 }
 
 local function load_config(config_file)
@@ -543,28 +556,118 @@ local function load_config(config_file)
 	return cfg
 end
 
+-- keeps only the first entry per `name`; later duplicates are dropped with a
+-- warning -- applied identically to fetchers and modules, whose `name` must
+-- both be config-unique (a module's `mod`/file id may repeat, its `name` may not)
+local function dedup_by_name(list, kind)
+	local seen, out = {}, {}
+	for _, e in ipairs(list) do
+		if seen[e.name] then
+			io.stderr:write("resmon: duplicate " .. kind .. " name '" .. tostring(e.name) .. "', skipping\n")
+		else
+			seen[e.name] = true
+			out[#out + 1] = e
+		end
+	end
+	return out
+end
+
+-- marks entry._bad = true in place for any module whose fetcher={} list
+-- references a name absent from the (deduped) declared fetchers, or whose
+-- fetcher list is empty/missing -- every display module must depend on at
+-- least one fetcher
+local function mark_bad_modules(cfg_modules, cfg_fetchers)
+	local names = {}
+	for _, fe in ipairs(cfg_fetchers) do names[fe.name] = true end
+	for _, e in ipairs(cfg_modules) do
+		for _, fname in ipairs(e.fetcher or {}) do
+			if not names[fname] then
+				io.stderr:write("resmon: module '" .. tostring(e.name) .. "' references unknown fetcher '" .. tostring(fname) .. "', marking BAD\n")
+				e._bad = true
+			end
+		end
+		if not e._bad and #(e.fetcher or {}) == 0 then
+			io.stderr:write("resmon: module '" .. tostring(e.name) .. "' declares no fetcher, marking BAD\n")
+			e._bad = true
+		end
+	end
+end
+
+-- sets fe.not_used = true in place on any fetcher referenced by zero
+-- surviving (non-BAD) modules -- these are never loaded or scheduled
+local function mark_unused_fetchers(cfg_fetchers, cfg_modules)
+	local used = {}
+	for _, e in ipairs(cfg_modules) do
+		if not e._bad then
+			for _, fname in ipairs(e.fetcher or {}) do used[fname] = true end
+		end
+	end
+	for _, fe in ipairs(cfg_fetchers) do
+		if not used[fe.name] then fe.not_used = true end
+	end
+end
+
 local function valid_module(mod)
 	return type(mod) == "table"
 		and type(mod.title) == "string"
 		and type(mod.min_w) == "number"
 		and type(mod.min_h) == "number"
-		and type(mod.default_delay) == "number"
 		and type(mod.redraw) == "function"
 end
 
-local function resolve_module(entry, modules_dir)
-	if BASE_MODULES[entry.name] then
-		local ok, mod = pcall(require, "mod_" .. entry.name)
+local function valid_fetcher(f)
+	return type(f) == "table"
+		and type(f.fetch) == "function"
+		and type(f.default_delay) == "number"
+end
+
+-- the config entry is passed through as the chunk's varargs (`...`), same as
+-- for display modules, so a fetcher wrapping an external process (e.g.
+-- GPU_Top spawning amdgpu_top) can size its own polling interval from
+-- entry.refresh instead of hardcoding one independently of the scheduler
+local function resolve_fetcher(entry, fetchers_dir)
+	if BASE_FETCHERS[entry.name] then
+		local loader = package.preload["fetch_" .. entry.name:lower()]
+		if not loader then return nil, "missing base fetcher 'fetch_" .. entry.name:lower() .. "'" end
+		local ok, f = pcall(loader, entry)
+		if not ok then return nil, f end
+		return f
+	end
+	local path = fetchers_dir .. "/" .. entry.name .. ".lua"
+	local chunk, err = loadfile(path)
+	if not chunk then return nil, err end
+	local ok, f = pcall(chunk, entry)
+	if not ok then return nil, f end
+	return f
+end
+
+-- builds the module's cache array (direct references into fetch_cache[name].data,
+-- ordered per entry.fetcher) then loads the module chunk, passing (entry, cache)
+-- as its varargs; base modules are resolved by calling the preloaded chunk
+-- directly rather than require() (which memoizes and would prevent loading
+-- the same base module twice, under different instance names, with different
+-- fetchers/config)
+local function resolve_module(entry, modules_dir, fetch_cache)
+	local cache = {}
+	for i, fname in ipairs(entry.fetcher or {}) do
+		local fc = fetch_cache[fname]
+		if not fc then return nil, "unknown or unloaded fetcher '" .. tostring(fname) .. "'" end
+		cache[i] = fc.data
+	end
+	if BASE_MODULES[entry.mod] then
+		local loader = package.preload["mod_" .. entry.mod]
+		if not loader then return nil, "missing base module 'mod_" .. entry.mod .. "'" end
+		local ok, mod = pcall(loader, entry, cache)
 		if not ok then return nil, mod end
 		return mod
 	end
-	local path = modules_dir .. "/" .. entry.name .. ".lua"
+	local path = modules_dir .. "/" .. entry.mod .. ".lua"
 	local chunk, err = loadfile(path)
 	if not chunk then return nil, err end
-	-- the config entry is passed through as the chunk's varargs (`...`), so a
-	-- custom module can read its own config fields beyond the generic
-	-- "refresh"/"weight" ones core.lua already handles itself
-	local ok, mod = pcall(chunk, entry)
+	-- the config entry and the module's own cache array are passed through as
+	-- the chunk's varargs (`...`), so a module can read its own config fields
+	-- and its fetched data alike
+	local ok, mod = pcall(chunk, entry, cache)
 	if not ok then return nil, mod end
 	return mod
 end
@@ -632,7 +735,7 @@ end
 
 local function main()
 	local opts = parse_args()
-	local config_file, modules_dir = resolve_paths(opts)
+	local config_file, fetchers_dir, modules_dir = resolve_paths(opts)
 
 	if libc.isatty(STDIN) == 0 then
 		fatal("stdin is not a terminal")
@@ -640,24 +743,58 @@ local function main()
 
 	local cfg = load_config(config_file) or DEFAULT_CONFIG
 	local orientation = cfg.orientation or "vertical"
-	local cfg_modules = cfg.modules or DEFAULT_CONFIG.modules
+	local cfg_fetchers = dedup_by_name(cfg.fetchers or DEFAULT_CONFIG.fetchers, "fetcher")
+	local cfg_modules = dedup_by_name(cfg.modules or DEFAULT_CONFIG.modules, "module")
 
-	local entries, mods = {}, {}
-	for _, e in ipairs(cfg_modules) do
-		local mod, err = resolve_module(e, modules_dir)
-		if mod and valid_module(mod) then
-			if e.refresh and not mod.fixed_delay then
-				mod.default_delay = e.refresh
+	mark_bad_modules(cfg_modules, cfg_fetchers)
+	mark_unused_fetchers(cfg_fetchers, cfg_modules)
+
+	local fetch_cache, loaded_fetchers = {}, {}
+	for _, fe in ipairs(cfg_fetchers) do
+		if not fe.not_used then
+			local fetcher, err = resolve_fetcher(fe, fetchers_dir)
+			if fetcher and valid_fetcher(fetcher) then
+				fetch_cache[fe.name] = { data = {} }
+				loaded_fetchers[#loaded_fetchers + 1] = { entry = fe, fetcher = fetcher }
+			else
+				io.stderr:write("resmon: skipping fetcher '" .. tostring(fe.name) .. "': " .. tostring(err or "invalid fetcher shape") .. "\n")
 			end
-			entries[#entries + 1] = e
-			mods[#mods + 1] = mod
-		else
-			io.stderr:write("resmon: skipping module '" .. tostring(e.name) .. "': " .. tostring(err or "invalid module shape") .. "\n")
+		end
+	end
+
+	local entries, mods, mods_dict = {}, {}, {}
+	for _, e in ipairs(cfg_modules) do
+		if not e._bad then
+			local mod, err = resolve_module(e, modules_dir, fetch_cache)
+			if mod and valid_module(mod) then
+				local idx = #entries + 1
+				entries[idx] = e
+				mods[idx] = mod
+				mods_dict[e.name] = { mod = mod, index = idx }
+			else
+				io.stderr:write("resmon: skipping module '" .. tostring(e.name) .. "': " .. tostring(err or "invalid module shape") .. "\n")
+			end
 		end
 	end
 
 	if #mods == 0 then
 		fatal("no valid modules to display")
+	end
+
+	-- one scheduler entry per loaded fetcher; `mods` lists the (surviving)
+	-- module instance names that depend on it, resolved via mods_dict at
+	-- dispatch time
+	local scheduler = {}
+	for _, lf in ipairs(loaded_fetchers) do
+		local sched_mods = {}
+		for _, e in ipairs(entries) do
+			for _, fname in ipairs(e.fetcher or {}) do
+				if fname == lf.entry.name then sched_mods[#sched_mods + 1] = e.name end
+			end
+		end
+		local delay = lf.fetcher.default_delay
+		if lf.entry.refresh and not lf.fetcher.fixed_delay then delay = lf.entry.refresh end
+		scheduler[#scheduler + 1] = { name = lf.entry.name, fetch = lf.fetcher.fetch, default_delay = delay, last_run = 0, mods = sched_mods }
 	end
 
 	enter_raw_mode()
@@ -666,8 +803,6 @@ local function main()
 
 	local last_w, last_h = 0, 0
 	local panes = {}
-	local last_run = {}
-	for i = 1, #mods do last_run[i] = 0 end
 
 	local function relayout()
 		local w, h = get_term_size()
@@ -688,9 +823,11 @@ local function main()
 		end
 		flush_output()
 
-		-- force every module to redraw on the next tick: the screen was just
-		-- cleared, so stale "not due yet" content would otherwise show as blank
-		for i = 1, #mods do last_run[i] = 0 end
+		-- force every fetcher to refire on the next tick: the screen was just
+		-- cleared, so stale "not due yet" content would otherwise show as
+		-- blank; refiring every fetcher transitively re-buffers every module
+		-- that depends on it
+		for _, sched in ipairs(scheduler) do sched.last_run = 0 end
 	end
 
 	relayout()
@@ -714,11 +851,27 @@ local function main()
 
 			if not paused then
 				local now = MonotonicNow()
-				for i, mod in ipairs(mods) do
-					if now - last_run[i] >= mod.default_delay then
-						mod.redraw(panes[i])
-						last_run[i] = now
+				local buf = {}
+				for _, sched in ipairs(scheduler) do
+					if now - sched.last_run >= sched.default_delay then
+						sched.last_run = now
+						local data, status, err = sched.fetch()
+						local cd = fetch_cache[sched.name].data
+						if status == 0 then
+							-- overwrite fields in place, never replace the table
+							-- itself: modules hold a direct reference to `cd`
+							for k, v in pairs(data) do cd[k] = v end
+							cd._ERROR = nil
+						else
+							cd._ERROR = true
+							if err then cd._ERROR_MSG = err end
+						end
+						for _, mname in ipairs(sched.mods) do buf[mname] = true end
 					end
+				end
+				for mname in pairs(buf) do
+					local rec = mods_dict[mname]
+					if rec then rec.mod.redraw(panes[rec.index]) end
 				end
 				flush_output()
 			end

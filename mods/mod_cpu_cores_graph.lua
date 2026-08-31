@@ -5,7 +5,10 @@
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
-local refresh_rate = 0.33
+-- Data source: fetcher "CPU_Cores" (fetchers/fetch_cpu_cores.lua)
+
+local _, cache = ...
+
 local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
 
 -- monochrome palette: one shade per core, linearly interpolated between a
@@ -44,7 +47,6 @@ local graphs_color = build_palette()
 local SMOOTHING_ALPHA = 0.35
 
 local MAX_HISTORY = 2000
-local prev_times = nil
 local smoothed = {} -- smoothed[id] = last exponential-moving-average value
 local history = {} -- history[id] = { {t=, v=}, ... }, sorted by t ascending
 
@@ -52,43 +54,6 @@ local function clamp01(v) -- >{
 	if v < 0 then return 0 end
 	if v > 100 then return 100 end
 	return v
-end -- >}
-
-local function read_cpu_times() -- >{
-	local raw = ReadProcFile("/proc/stat")
-	local times = {}
-	if not raw then return times end
-	for line in raw:gmatch("[^\n]+") do
-		local id, rest = line:match("^cpu(%d+)%s+(.*)$")
-		if id then
-			local total, idle, field = 0, 0, 0
-			for n in rest:gmatch("%d+") do
-				field = field + 1
-				local v = tonumber(n)
-				total = total + v
-				if field == 4 or field == 5 then idle = idle + v end
-			end
-			times[tonumber(id)] = { total = total, idle = idle }
-		end
-	end
-	return times
-end -- >}
-
-local function core_usage_percents() -- >{
-	local cur = read_cpu_times()
-	local pct = {}
-	for id, t in pairs(cur) do
-		local p = prev_times and prev_times[id]
-		if p then
-			local dtotal = t.total - p.total
-			local didle = t.idle - p.idle
-			pct[id] = (dtotal > 0) and clamp01((dtotal - didle) / dtotal * 100) or 0
-		else
-			pct[id] = 0
-		end
-	end
-	prev_times = cur
-	return pct
 end -- >}
 
 local function push_sample(id, v, t) -- >{
@@ -217,7 +182,7 @@ end -- >}
 
 local function redraw(pane) -- >{
 	local now = MonotonicNow()
-	local pct = core_usage_percents()
+	local pct = (cache[1] and cache[1].cores) or {}
 	local ids = {}
 	for id, v in pairs(pct) do
 		ids[#ids + 1] = id
@@ -266,7 +231,6 @@ return { -- >{
 	title = "CPU Cores Graph",
 	min_w = 20,
 	min_h = 8,
-	default_delay = refresh_rate,
 	redraw = redraw,
 } -- >}
 

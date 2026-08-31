@@ -1,22 +1,36 @@
 -- Full-featured example resmon configuration -- CPU Cores Graph, GPU Graph,
 -- CLOCK Frequency Graph (CPU only), CLOCK Frequency Avg Graph, TEMP Graph,
--- CPU Pulse, MEM, GPU Monitor, CPU Load, Top Processes.
+-- CPU Pulse, GPU Monitor, Top Processes, laid out horizontally.
 -- Copy to ~/.config/resmon/config.lua (or point --config-file at a copy of this).
 -- See config.lua.example for a minimal starting point and a reference of
--- what each field ("name", "weight", "refresh") does.
+-- what each field ("name", "mod", "fetcher", "weight") does.
+--
+-- Note the sharing: "CPU_Cores" is fetched once below and read by both
+-- cores_graph and pulse; "GPU_Top" is fetched once (a single amdgpu_top
+-- process) and read by both gpu_graph and gpu.
 
 return { -- >{
 	orientation = "horizontal",
 
+	fetchers = {
+		{ name = "CPU_Cores", refresh = 0.33 },
+		{ name = "GPU_Top", refresh = 0.5 },
+		{ name = "CPU_Clock", refresh = 0.5 },
+		{ name = "GPU_Clock", refresh = 0.5 },
+		{ name = "CPU_Temp", refresh = 0.5 },
+		{ name = "GPU_Temp", refresh = 0.5 },
+		{ name = "TOP", refresh = 1.5 },
+	},
+
 	modules = {
-		{ name = "mod_cpu_cores_graph", weight = 1 },
-		{ name = "mod_gpu_graph", weight = 1 },
-		{ name = "mod_clock_graph", weight = 1, show_gpu = false },
-		{ name = "mod_clock_avg_graph", weight = 1 },
-		{ name = "mod_temp_graph", weight = 1 },
-		{ name = "mod_cpu_pulse", weight = 1 },
-		{ name = "mod_gpu", weight = 1 },
-		{ name = "top", weight = 1 },
+		{ name = "cores_graph", mod = "mod_cpu_cores_graph", weight = 1, fetcher = { "CPU_Cores" } },
+		{ name = "gpu_graph", mod = "mod_gpu_graph", weight = 1, fetcher = { "GPU_Top" } },
+		{ name = "clock", mod = "mod_clock_graph", weight = 1, fetcher = { "CPU_Clock" } },
+		{ name = "clock_avg", mod = "mod_clock_avg_graph", weight = 1, fetcher = { "CPU_Clock", "GPU_Clock" } },
+		{ name = "temp", mod = "mod_temp_graph", weight = 1, fetcher = { "CPU_Temp", "GPU_Temp" } },
+		{ name = "pulse", mod = "mod_cpu_pulse", weight = 1, fetcher = { "CPU_Cores" } },
+		{ name = "gpu", mod = "mod_gpu", weight = 1, fetcher = { "GPU_Top" } },
+		{ name = "top", mod = "top", weight = 1, fetcher = { "TOP" } },
 	},
 } -- >}
 

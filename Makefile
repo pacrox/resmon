@@ -14,6 +14,7 @@ LDLIBS := $(LUAJIT_STATIC_LIB) -lm -ldl
 
 BIN := resmon
 GEN_HEADERS := generated/core_bc.h generated/sextant_chars_bc.h \
+               generated/fetch_cpu_average_bc.h generated/fetch_mem_bc.h generated/fetch_top_bc.h \
                generated/mod_cpu_bc.h generated/mod_mem_bc.h generated/mod_top_bc.h
 
 HOME_CONFIG := $(HOME)/.config/resmon
@@ -36,6 +37,18 @@ generated/sextant_chars_bc.h: src/sextant_chars.lua
 	@mkdir -p generated
 	$(LUAJIT) -b -n sextant_chars -t h src/sextant_chars.lua generated/sextant_chars_bc.h
 
+generated/fetch_cpu_average_bc.h: src/fetch_cpu_average.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n fetch_cpu_average -t h src/fetch_cpu_average.lua generated/fetch_cpu_average_bc.h
+
+generated/fetch_mem_bc.h: src/fetch_mem.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n fetch_mem -t h src/fetch_mem.lua generated/fetch_mem_bc.h
+
+generated/fetch_top_bc.h: src/fetch_top.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n fetch_top -t h src/fetch_top.lua generated/fetch_top_bc.h
+
 generated/mod_cpu_bc.h: src/mod_cpu.lua
 	@mkdir -p generated
 	$(LUAJIT) -b -n mod_cpu -t h src/mod_cpu.lua generated/mod_cpu_bc.h
@@ -49,9 +62,10 @@ generated/mod_top_bc.h: src/mod_top.lua
 	$(LUAJIT) -b -n mod_top -t h src/mod_top.lua generated/mod_top_bc.h
 
 install-config:
-	mkdir -p $(HOME_CONFIG)/mods
+	mkdir -p $(HOME_CONFIG)/addons/fetchers $(HOME_CONFIG)/addons/mods
 	test -f $(HOME_CONFIG)/config.lua || cp config/config.lua.example $(HOME_CONFIG)/config.lua
-	cp mods/mod_cpu_cores.lua mods/mod_cpu_cores_graph.lua mods/mod_gpu.lua $(HOME_CONFIG)/mods/
+	cp fetchers/*.lua $(HOME_CONFIG)/addons/fetchers/
+	cp mods/*.lua $(HOME_CONFIG)/addons/mods/
 
 clean:
 	rm -f host.o $(BIN) $(GEN_HEADERS)
