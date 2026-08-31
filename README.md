@@ -1,4 +1,4 @@
-# resmon
+# resmon (v0.3.0)
 
 Zero-dependency TUI resource monitor, written in LuaJIT and compiled into a
 single self-contained ELF binary. No external Lua/LuaJIT install is required
