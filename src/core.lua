@@ -475,7 +475,7 @@ end
 -- >}
 
 -- CLI argument parsing >{
-local VERSION = "0.2.1"
+local VERSION = "0.3.0_dev"
 
 local function print_usage()
 	io.write("Usage: resmon [options]\n\n")
