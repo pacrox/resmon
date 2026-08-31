@@ -3,17 +3,17 @@
 -- brightness wins on overlap) but with two fixed colors instead of a
 -- monochrome palette: CPU in blue, GPU in magenta.
 --
--- Data source: fetchers "CPU_Temp" and "GPU_Temp" (fetchers/CPU_Temp.lua,
--- fetchers/GPU_Temp.lua), each with potentially different refresh rates --
+-- Data source: fetchers "CPU_Temp_AMD" and "GPU_Temp_AMD" (fetchers/CPU_Temp_AMD.lua,
+-- fetchers/GPU_Temp_AMD.lua), each with potentially different refresh rates --
 -- the params below are read from whichever cache slot has the latest data
 -- each tick, independently.
 
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
-local _, cache = ...
+local entry, cache = ...
 
-local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
 
 local TEMP_MIN, TEMP_MAX = 40, 100
 

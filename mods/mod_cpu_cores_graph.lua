@@ -12,9 +12,9 @@ local sChar = require("sextant_chars")
 
 -- Data source: fetcher "CPU_Cores" (fetchers/fetch_cpu_cores.lua)
 
-local _, cache = ...
+local entry, cache = ...
 
-local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
 
 -- monochrome value gradient endpoints, dark green to pale green, same hue
 -- throughout, only brightness varies. The gradient is rebuilt each redraw

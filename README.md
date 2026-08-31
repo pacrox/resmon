@@ -28,6 +28,29 @@ on its own refresh interval and caches the result; any number of modules can
 read from the same fetcher without it being re-fetched. A fetcher unused by
 any configured module is never loaded.
 
+Fetchers whose data source is vendor-specific carry an `_AMD` or `_INTEL`
+suffix. A module doesn't care which fetcher backs it, only that it returns
+data shaped the way the module expects (see each module's source) — a
+vendor's equivalent fetcher is a drop-in replacement in `fetcher = {...}`,
+no module changes needed. **The example configs in `config/` are written
+for AMD hardware (integrated GPU included)**; to target an Intel iGPU
+system instead, it's enough to replace the `_AMD` suffix with `_INTEL` on
+`GPU_Clock`, `CPU_Temp`, `GPU_Temp` and `GPU_Top` throughout your config
+file, both in the `fetchers` list and in the `fetcher = {...}` array of
+whichever modules reference them.
+
+**The `_INTEL` fetchers are untested** — no Intel hardware was available to
+verify them against, so they're released without any guarantee they work
+correctly. They were written from documented sysfs paths / driver names
+(`coretemp`, i915's `gt_*_freq_mhz`, `intel_gpu_top -J`), not validated on
+real hardware. `GPU_Top_INTEL` in particular synthesizes its own JSON
+shape from `intel_gpu_top`'s output to stay a true drop-in for
+`mod_gpu`/`mod_gpu_graph`, and is the most speculative of the four — see
+its own file for exactly what it assumes. If one of these doesn't work on
+your system, the dependent module degrades to stale/no data rather than
+crashing (same fetcher-error contract as any other fetcher) — reports of
+what actually works (or doesn't) on real Intel hardware are welcome.
+
 | Fetcher | OS/Arch | Source | Depend. | Notes |
 |---|---|---|---|---|
 | `CPU_Average` | Linux (any arch) | `/proc/loadavg` | — | Fixed 60s refresh, not overridable |
@@ -35,10 +58,14 @@ any configured module is never loaded.
 | `TOP` | Linux/x86-64 | `/proc/[pid]/stat`<br>`/proc/[pid]/status`<br>`/etc/passwd` | — | Assumes `CLK_TCK=100` (glibc default) |
 | `CPU_Cores` | Linux (any arch) | `/proc/stat` | — | Core count auto-detected |
 | `CPU_Clock` | Linux (any arch) | `cpuN/cpufreq/*` (per-core) | — | Min/max range discovered once at load |
-| `GPU_Clock` | Linux/AMD | hwmon `amdgpu` sclk + `pp_dpm_sclk` | — | Min/max range discovered once at load |
-| `CPU_Temp` | Linux/AMD | hwmon `k10temp` | — | No Intel `coretemp` fallback |
-| `GPU_Temp` | Linux/AMD | hwmon `amdgpu` | — | — |
-| `GPU_Top` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | One persistent process shared by every module that depends on it; first sample after (re)spawn always reads 0; GRBM% reads 0 without perf-counter access |
+| `GPU_Clock_AMD` | Linux/AMD | hwmon `amdgpu` sclk + `pp_dpm_sclk` | — | Min/max range discovered once at load |
+| `GPU_Clock_INTEL` | Linux/Intel | i915 sysfs `gt_*_freq_mhz` | — | **Untested.** Min/max range discovered once at load |
+| `CPU_Temp_AMD` | Linux/AMD | hwmon `k10temp` | — | — |
+| `CPU_Temp_INTEL` | Linux/Intel | hwmon `coretemp` | — | **Untested** |
+| `GPU_Temp_AMD` | Linux/AMD | hwmon `amdgpu` | — | — |
+| `GPU_Temp_INTEL` | Linux/Intel | hwmon `i915` | — | **Untested**, likely absent on most systems — integrated Intel GPUs usually have no separate thermal sensor from the CPU package |
+| `GPU_Top_AMD` | Linux/AMD | `amdgpu_top -J` | `amdgpu_top` | One persistent process shared by every module that depends on it; first sample after (re)spawn always reads 0; GRBM% reads 0 without perf-counter access |
+| `GPU_Top_INTEL` | Linux/Intel | `intel_gpu_top -J` | `intel_gpu_top` | **Untested**, the most speculative of the four Intel fetchers; synthesizes a GFX/Media-only approximation of AMD's fdinfo shape, no GRBM/GRBM2 or VRAM/GTT equivalent |
 
 ### Custom modules (`mods/`)
 
@@ -54,16 +81,18 @@ any configured module is never loaded.
 - `mod_gpu` — GPU resource usage bars (via `amdgpu_top -J`).
 - `mod_gpu_graph` — GPU engine/performance-counter usage, scrolling history graph (via `amdgpu_top -J`).
 
-`mod_gpu` and `mod_gpu_graph` require the `GPU_Top` fetcher (`amdgpu_top` on
-`$PATH`, AMD GPU); every other custom module's fetcher reads directly from
-`/proc` and `/sys` via FFI.
+`mod_gpu` and `mod_gpu_graph` require `GPU_Top_AMD` (`amdgpu_top` on `$PATH`,
+AMD GPU) or, untested, `GPU_Top_INTEL` (`intel_gpu_top` on `$PATH`, Intel
+iGPU); every other custom module's fetcher reads directly from `/proc` and
+`/sys` via FFI.
 
 ### Modules → fetcher(s)
 
 The GPU line on `mod_clock_graph`/`mod_clock_avg_graph` is optional: include
-`GPU_Clock` in that module instance's `fetcher = {...}` list to show it, omit
-it to draw CPU-only — there is no separate on/off option, the dependency list
-itself is the toggle. `mod_temp_graph` needs both of its fetchers; if they
+`GPU_Clock_AMD` (or, untested, `GPU_Clock_INTEL`) in that module instance's
+`fetcher = {...}` list to show it, omit it to draw CPU-only — there is no
+separate on/off option, the dependency list itself is the toggle.
+`mod_temp_graph` needs both of its fetchers; if they
 refresh at different rates, the graph repeats each one's last value between
 its own updates.
 
@@ -75,11 +104,11 @@ its own updates.
 | `mod_cpu_cores` | `CPU_Cores` |
 | `mod_cpu_cores_graph` | `CPU_Cores` |
 | `mod_cpu_pulse` | `CPU_Cores` |
-| `mod_temp_graph` | `CPU_Temp`, `GPU_Temp` |
-| `mod_clock_graph` | `CPU_Clock` (+ `GPU_Clock` optional) |
-| `mod_clock_avg_graph` | `CPU_Clock` (+ `GPU_Clock` optional) |
-| `mod_gpu` | `GPU_Top` |
-| `mod_gpu_graph` | `GPU_Top` |
+| `mod_temp_graph` | `CPU_Temp_AMD`, `GPU_Temp_AMD` |
+| `mod_clock_graph` | `CPU_Clock` (+ `GPU_Clock_AMD` optional) |
+| `mod_clock_avg_graph` | `CPU_Clock` (+ `GPU_Clock_AMD` optional) |
+| `mod_gpu` | `GPU_Top_AMD` |
+| `mod_gpu_graph` | `GPU_Top_AMD` |
 
 ## Screenshots
 
@@ -201,6 +230,9 @@ return {
   entry (received as part of the module's Lua varargs, `...`), so a module
   can define additional options of its own. See each module's source for the
   options it supports.
+- `interval`: on every scrolling-history graph module (`mod_cpu_cores_graph`,
+  `mod_clock_graph`, `mod_clock_avg_graph`, `mod_temp_graph`, `mod_gpu_graph`),
+  the width of the X-axis time window in seconds (default `30`).
 
 See `config/config.lua.example` for a minimal starting point,
 `config/config-full.lua.example` for a fuller vertical setup exercising most

@@ -623,7 +623,7 @@ end
 
 -- the config entry is passed through as the chunk's varargs (`...`), same as
 -- for display modules, so a fetcher wrapping an external process (e.g.
--- GPU_Top spawning amdgpu_top) can size its own polling interval from
+-- GPU_Top_AMD spawning amdgpu_top) can size its own polling interval from
 -- entry.refresh instead of hardcoding one independently of the scheduler
 local function resolve_fetcher(entry, fetchers_dir)
 	if BASE_FETCHERS[entry.name] then

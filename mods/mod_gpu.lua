@@ -1,5 +1,5 @@
 -- Custom module: GPU resource usage bars.
--- Data source: fetcher "GPU_Top" (fetchers/GPU_Top.lua, shared with
+-- Data source: fetcher "GPU_Top_AMD" (fetchers/GPU_Top_AMD.lua, shared with
 -- mod_gpu_graph -- one `amdgpu_top -J` process instead of two).
 --
 -- NOTE: the raw GRBM/GRBM2 performance-counter percentages (Graphics Pipe,

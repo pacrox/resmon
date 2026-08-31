@@ -6,7 +6,7 @@
 -- read from the fetchers' data.
 --
 -- Data source: fetcher "CPU_Clock" (fetchers/CPU_Clock.lua, averaged across
--- cores here), plus fetcher "GPU_Clock" (fetchers/GPU_Clock.lua) if listed
+-- cores here), plus fetcher "GPU_Clock_AMD" (fetchers/GPU_Clock_AMD.lua) if listed
 -- as a second dependency in this module's own config entry -- its presence
 -- in `fetcher={...}` is what turns the GPU line on, no separate option
 -- needed.
@@ -14,9 +14,9 @@
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
-local _, cache = ...
+local entry, cache = ...
 
-local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
 
 local function read_cpu_avg_ghz() -- >{
 	local data = cache[1] or {}

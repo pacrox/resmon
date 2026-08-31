@@ -6,7 +6,7 @@
 -- what each field ("name", "mod", "fetcher", "weight") does.
 --
 -- Note the sharing: "CPU_Cores" is fetched once below and read by both
--- cores_graph and pulse; "GPU_Top" is fetched once (a single amdgpu_top
+-- cores_graph and pulse; "GPU_Top_AMD" is fetched once (a single amdgpu_top
 -- process) and read by both gpu_graph and gpu.
 
 return { -- >{
@@ -14,11 +14,11 @@ return { -- >{
 
 	fetchers = {
 		{ name = "CPU_Cores", refresh = 0.33 },
-		{ name = "GPU_Top", refresh = 0.5 },
+		{ name = "GPU_Top_AMD", refresh = 0.5 },
 		{ name = "CPU_Clock", refresh = 0.5 },
-		{ name = "GPU_Clock", refresh = 0.5 },
-		{ name = "CPU_Temp", refresh = 0.5 },
-		{ name = "GPU_Temp", refresh = 0.5 },
+		{ name = "GPU_Clock_AMD", refresh = 0.5 },
+		{ name = "CPU_Temp_AMD", refresh = 0.5 },
+		{ name = "GPU_Temp_AMD", refresh = 0.5 },
 		{ name = "MEM", refresh = 1.5 },
 		{ name = "CPU_Average", refresh = 60 },
 		{ name = "TOP", refresh = 1.5 },
@@ -26,13 +26,13 @@ return { -- >{
 
 	modules = {
 		{ name = "cores_graph", mod = "mod_cpu_cores_graph", weight = 2, fetcher = { "CPU_Cores" } },
-		{ name = "gpu_graph", mod = "mod_gpu_graph", weight = 2, fetcher = { "GPU_Top" } },
+		{ name = "gpu_graph", mod = "mod_gpu_graph", weight = 2, fetcher = { "GPU_Top_AMD" } },
 		{ name = "clock", mod = "mod_clock_graph", weight = 1, fetcher = { "CPU_Clock" } },
-		{ name = "clock_avg", mod = "mod_clock_avg_graph", weight = 1, fetcher = { "CPU_Clock", "GPU_Clock" } },
-		{ name = "temp", mod = "mod_temp_graph", weight = 1.25, fetcher = { "CPU_Temp", "GPU_Temp" } },
+		{ name = "clock_avg", mod = "mod_clock_avg_graph", weight = 1, fetcher = { "CPU_Clock", "GPU_Clock_AMD" } },
+		{ name = "temp", mod = "mod_temp_graph", weight = 1.25, fetcher = { "CPU_Temp_AMD", "GPU_Temp_AMD" } },
 		{ name = "pulse", mod = "mod_cpu_pulse", weight = .75, fetcher = { "CPU_Cores" } },
 		{ name = "mem", mod = "mem", weight = -6, fetcher = { "MEM" } },
-		{ name = "gpu", mod = "mod_gpu", weight = -15, fetcher = { "GPU_Top" } },
+		{ name = "gpu", mod = "mod_gpu", weight = -15, fetcher = { "GPU_Top_AMD" } },
 		{ name = "cpu", mod = "cpu", weight = -9, fetcher = { "CPU_Average" } },
 		{ name = "top", mod = "top", weight = -12, fetcher = { "TOP" } },
 	},

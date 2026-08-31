@@ -8,15 +8,15 @@
 -- drawn darkest-first so the palest curve always ends up on top where lines
 -- overlap. Same #FFD068 hue throughout instead of CPU Cores Graph's green.
 --
--- Data source: fetcher "GPU_Top" (fetchers/GPU_Top.lua, shared with mod_gpu
+-- Data source: fetcher "GPU_Top_AMD" (fetchers/GPU_Top_AMD.lua, shared with mod_gpu
 -- -- one `amdgpu_top -J` process instead of two).
 
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
-local _, cache = ...
+local entry, cache = ...
 
-local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
 
 -- monochrome value gradient endpoints, dark to #FFD068, same hue
 -- throughout, only brightness varies. The gradient is rebuilt each redraw
