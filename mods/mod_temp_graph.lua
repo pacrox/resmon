@@ -3,35 +3,23 @@
 -- brightness wins on overlap) but with two fixed colors instead of a
 -- monochrome palette: CPU in blue, GPU in magenta.
 --
--- Data source: hwmon sysfs (temp1_input, millidegrees C), read directly via
--- FFI (ReadProcFile) -- no external tool needed for temperatures.
+-- Data source: fetchers "CPU_Temp_AMD" and "GPU_Temp_AMD" (fetchers/CPU_Temp_AMD.lua,
+-- fetchers/GPU_Temp_AMD.lua), each with potentially different refresh rates --
+-- the params below are read from whichever cache slot has the latest data
+-- each tick, independently.
 
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
-local refresh_rate = 0.5
-local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+local entry, cache = ...
+
+local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
 
 local TEMP_MIN, TEMP_MAX = 40, 100
 
--- hwmon device index isn't stable across systems, only the driver name is;
--- resolved once at module load by scanning hwmon0..hwmon31 for a name match.
-local function find_hwmon_temp_path(driver_name) -- >{
-	for i = 0, 31 do
-		local base = "/sys/class/hwmon/hwmon" .. i
-		local name = ReadProcFile(base .. "/name")
-		if name and name:match("^" .. driver_name .. "%s*$") then
-			return base .. "/temp1_input"
-		end
-	end
-	return nil
-end -- >}
-
 local params = { -- >{
-	{ id = 1, label = "CPU", color = { r = 70, g = 150, b = 255 }, -- blue
-		path = find_hwmon_temp_path("k10temp") },
-	{ id = 2, label = "GPU", color = { r = 230, g = 90, b = 230 }, -- magenta
-		path = find_hwmon_temp_path("amdgpu") },
+	{ id = 1, label = "CPU", color = { r = 70, g = 150, b = 255 } }, -- blue
+	{ id = 2, label = "GPU", color = { r = 230, g = 90, b = 230 } }, -- magenta
 } -- >}
 
 -- raw sensor readings are noisy tick to tick; smoothing before plotting
@@ -46,15 +34,6 @@ local function clamp(v, lo, hi) -- >{
 	if v < lo then return lo end
 	if v > hi then return hi end
 	return v
-end -- >}
-
-local function read_temp_c(path) -- >{
-	if not path then return nil end
-	local raw = ReadProcFile(path)
-	if not raw then return nil end
-	local milli = tonumber(raw:match("%-?%d+"))
-	if not milli then return nil end
-	return milli / 1000
 end -- >}
 
 local function push_sample(id, v, t) -- >{
@@ -176,8 +155,9 @@ end -- >}
 local function redraw(pane) -- >{
 	local now = MonotonicNow()
 
-	for _, param in ipairs(params) do
-		local v = read_temp_c(param.path)
+	for i, param in ipairs(params) do
+		local data = cache[i]
+		local v = data and data.temp_c
 		if v ~= nil then
 			-- clamp into the fixed 20-110 display range right away so an
 			-- out-of-range sensor glitch can never push a plotted point
@@ -229,7 +209,6 @@ return { -- >{
 	title = "TEMP Graph",
 	min_w = 20,
 	min_h = 8,
-	default_delay = refresh_rate,
 	redraw = redraw,
 } -- >}
 

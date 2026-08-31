@@ -1,24 +1,40 @@
 -- Full-featured example resmon configuration -- CPU Cores Graph, GPU Graph,
--- CLOCK Frequency Graph (CPU only), CLOCK Frequency Avg Graph, TEMP Graph,
--- CPU Pulse, MEM, GPU Monitor, CPU Load, Top Processes.
+-- CLOCK Frequency Graph (CPU only), CLOCK Frequency Avg Graph (CPU + GPU),
+-- TEMP Graph, CPU Pulse, MEM, GPU Monitor, CPU Load, Top Processes.
 -- Copy to ~/.config/resmon/config.lua (or point --config-file at a copy of this).
 -- See config.lua.example for a minimal starting point and a reference of
--- what each field ("name", "weight", "refresh") does.
+-- what each field ("name", "mod", "fetcher", "weight") does.
+--
+-- Note the sharing: "CPU_Cores" is fetched once below and read by both
+-- cores_graph and pulse; "GPU_Top_AMD" is fetched once (a single amdgpu_top
+-- process) and read by both gpu_graph and gpu.
 
 return { -- >{
 	orientation = "vertical",
 
+	fetchers = {
+		{ name = "CPU_Cores", refresh = 0.33 },
+		{ name = "GPU_Top_AMD", refresh = 0.5 },
+		{ name = "CPU_Clock", refresh = 0.5 },
+		{ name = "GPU_Clock_AMD", refresh = 0.5 },
+		{ name = "CPU_Temp_AMD", refresh = 0.5 },
+		{ name = "GPU_Temp_AMD", refresh = 0.5 },
+		{ name = "MEM", refresh = 1.5 },
+		{ name = "CPU_Average", refresh = 60 },
+		{ name = "TOP", refresh = 1.5 },
+	},
+
 	modules = {
-		{ name = "mod_cpu_cores_graph", weight = 2 },
-		{ name = "mod_gpu_graph", weight = 2 },
-		{ name = "mod_clock_graph", weight = 1, show_gpu = false },
-		{ name = "mod_clock_avg_graph", weight = 1 },
-		{ name = "mod_temp_graph", weight = 1.25 },
-		{ name = "mod_cpu_pulse", weight = .75 },
-		{ name = "mem", weight = -6 },
-		{ name = "mod_gpu", weight = -15 },
-		{ name = "cpu", weight = -9 },
-		{ name = "top", weight = -12 },
+		{ name = "cores_graph", mod = "mod_cpu_cores_graph", weight = 2, fetcher = { "CPU_Cores" } },
+		{ name = "gpu_graph", mod = "mod_gpu_graph", weight = 2, fetcher = { "GPU_Top_AMD" } },
+		{ name = "clock", mod = "mod_clock_graph", weight = 1, fetcher = { "CPU_Clock" } },
+		{ name = "clock_avg", mod = "mod_clock_avg_graph", weight = 1, fetcher = { "CPU_Clock", "GPU_Clock_AMD" } },
+		{ name = "temp", mod = "mod_temp_graph", weight = 1.25, fetcher = { "CPU_Temp_AMD", "GPU_Temp_AMD" } },
+		{ name = "pulse", mod = "mod_cpu_pulse", weight = .75, fetcher = { "CPU_Cores" } },
+		{ name = "mem", mod = "mem", weight = -6, fetcher = { "MEM" } },
+		{ name = "gpu", mod = "mod_gpu", weight = -15, fetcher = { "GPU_Top_AMD" } },
+		{ name = "cpu", mod = "cpu", weight = -9, fetcher = { "CPU_Average" } },
+		{ name = "top", mod = "top", weight = -12, fetcher = { "TOP" } },
 	},
 } -- >}
 

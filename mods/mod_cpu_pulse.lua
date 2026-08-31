@@ -5,7 +5,9 @@
 -- pulse/mountain shape with the highest usage at the center and the lowest
 -- at both outer edges, instead of a single busiest-to-idlest ramp.
 
-local refresh_rate = 0.33
+-- Data source: fetcher "CPU_Cores" (fetchers/fetch_cpu_cores.lua)
+
+local _, cache = ...
 
 -- 25-shade gradient: green (0%) through yellow/orange (50%) to red (100%),
 -- two linear segments joined at the midpoint. BandColor() (see core.lua)
@@ -40,34 +42,6 @@ end -- >}
 local bars_colors = build_bars_colors()
 
 local SCALE_MIN, SCALE_MAX = 0, 100
-local prev_times = nil
-
-local function clamp01(v) -- >{
-	if v < 0 then return 0 end
-	if v > 100 then return 100 end
-	return v
-end -- >}
-
-local function read_cpu_times() -- >{
-	local raw = ReadProcFile("/proc/stat")
-	local times = {}
-	if not raw then return times end
-	for line in raw:gmatch("[^\n]+") do
-		local id, rest = line:match("^cpu(%d+)%s+(.*)$")
-		if id then
-			local total, idle = 0, 0
-			local field = 0
-			for n in rest:gmatch("%d+") do
-				field = field + 1
-				local v = tonumber(n)
-				total = total + v
-				if field == 4 or field == 5 then idle = idle + v end
-			end
-			times[tonumber(id)] = { total = total, idle = idle }
-		end
-	end
-	return times
-end -- >}
 
 -- draws one column: a real core's bar, or a synthetic interpolated one
 -- (width 1, value = average of its two neighbors) inserted to fill the
@@ -78,25 +52,8 @@ local function draw_column(pane, bar_h, x, w, v) -- >{
 	Bar(bar_pane, v, SCALE_MIN, SCALE_MAX, "vertical", bars_colors)
 end -- >}
 
-local function core_usage_percents() -- >{
-	local cur = read_cpu_times()
-	local pct = {}
-	for id, t in pairs(cur) do
-		local p = prev_times and prev_times[id]
-		if p then
-			local dtotal = t.total - p.total
-			local didle = t.idle - p.idle
-			pct[id] = (dtotal > 0) and clamp01((dtotal - didle) / dtotal * 100) or 0
-		else
-			pct[id] = 0
-		end
-	end
-	prev_times = cur
-	return pct
-end -- >}
-
 local function redraw(pane) -- >{
-	local pct = core_usage_percents()
+	local pct = (cache[1] and cache[1].cores) or {}
 	local cores = {}
 	for id, v in pairs(pct) do cores[#cores + 1] = { id = id, v = v } end
 	-- tie-break by id: table.sort is not stable, and cores tied on usage would
@@ -177,7 +134,6 @@ return { -- >{
 	title = "CPU Pulse",
 	min_w = 10,
 	min_h = 6,
-	default_delay = refresh_rate,
 	redraw = redraw,
 } -- >}
 

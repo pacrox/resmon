@@ -1,23 +1,26 @@
 -- Custom module: per-core CPU usage history, all cores overlaid in one
--- shared 0-100 plot (not stacked), scrolling right-to-left, each core in
--- its own shade and its samples connected by continuous lines.
+-- shared 0-100 plot (not stacked), scrolling right-to-left. Each core gets
+-- its own unique shade -- as many shades as visible cores, no repeats --
+-- assigned by how close that core's own average (over the visible window)
+-- sits to the average of every core shown: the closest to the group average
+-- is palest, the farthest is darkest, evenly spread in between. Cores are
+-- drawn darkest-first so the palest curve always ends up on top where lines
+-- overlap.
 
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
-local refresh_rate = 0.33
-local time_interval = 30 -- seconds shown on the X axis window, ticked every 10s
+-- Data source: fetcher "CPU_Cores" (fetchers/fetch_cpu_cores.lua)
 
--- monochrome palette: one shade per core, linearly interpolated between a
--- dark and a light green endpoint (same hue throughout, only brightness
--- varies), palest first. GRAPH_PALETTE_SIZE colors are generated regardless
--- of the actual core count; pick_color cycles through them if there are
--- more cores than entries. Where two cores' lines land on the same cell,
--- the lighter shade always wins (see mark_point) regardless of which core
--- happened to be drawn last.
+local entry, cache = ...
+
+local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
+
+-- monochrome value gradient endpoints, dark green to pale green, same hue
+-- throughout, only brightness varies. The gradient is rebuilt each redraw
+-- with exactly one entry per currently visible core (see build_grid).
 local GRAPH_DARK = { r = 39, g = 80, b = 44 }   -- darkest, 10% lighter than pure dark
 local GRAPH_LIGHT = { r = 189, g = 230, b = 198 } -- palest, 10% darker than pure light
-local GRAPH_PALETTE_SIZE = 20
 
 local function lerp_color(a, b, t) -- >{
 	return {
@@ -27,15 +30,14 @@ local function lerp_color(a, b, t) -- >{
 	}
 end -- >}
 
-local function build_palette() -- >{
+local function build_gradient(dark, light, size) -- >{
+	if size <= 1 then return { light } end
 	local t = {}
-	for i = 0, GRAPH_PALETTE_SIZE - 1 do
-		t[i + 1] = lerp_color(GRAPH_DARK, GRAPH_LIGHT, i / (GRAPH_PALETTE_SIZE - 1))
+	for i = 0, size - 1 do
+		t[i + 1] = lerp_color(dark, light, i / (size - 1))
 	end
 	return t
 end -- >}
-
-local graphs_color = build_palette()
 
 -- raw per-core %CPU is noisy sample to sample; smoothing it before plotting
 -- keeps consecutive points closer together, so the diagonal joins between
@@ -44,7 +46,6 @@ local graphs_color = build_palette()
 local SMOOTHING_ALPHA = 0.35
 
 local MAX_HISTORY = 2000
-local prev_times = nil
 local smoothed = {} -- smoothed[id] = last exponential-moving-average value
 local history = {} -- history[id] = { {t=, v=}, ... }, sorted by t ascending
 
@@ -52,43 +53,6 @@ local function clamp01(v) -- >{
 	if v < 0 then return 0 end
 	if v > 100 then return 100 end
 	return v
-end -- >}
-
-local function read_cpu_times() -- >{
-	local raw = ReadProcFile("/proc/stat")
-	local times = {}
-	if not raw then return times end
-	for line in raw:gmatch("[^\n]+") do
-		local id, rest = line:match("^cpu(%d+)%s+(.*)$")
-		if id then
-			local total, idle, field = 0, 0, 0
-			for n in rest:gmatch("%d+") do
-				field = field + 1
-				local v = tonumber(n)
-				total = total + v
-				if field == 4 or field == 5 then idle = idle + v end
-			end
-			times[tonumber(id)] = { total = total, idle = idle }
-		end
-	end
-	return times
-end -- >}
-
-local function core_usage_percents() -- >{
-	local cur = read_cpu_times()
-	local pct = {}
-	for id, t in pairs(cur) do
-		local p = prev_times and prev_times[id]
-		if p then
-			local dtotal = t.total - p.total
-			local didle = t.idle - p.idle
-			pct[id] = (dtotal > 0) and clamp01((dtotal - didle) / dtotal * 100) or 0
-		else
-			pct[id] = 0
-		end
-	end
-	prev_times = cur
-	return pct
 end -- >}
 
 local function push_sample(id, v, t) -- >{
@@ -129,19 +93,10 @@ local function x_tick_labels() -- >{
 	return labels
 end -- >}
 
-local function pick_color(id) -- >{
-	if type(graphs_color) == "table" and (type(graphs_color[1]) == "table" or type(graphs_color[1]) == "string") then
-		return graphs_color[(id % #graphs_color) + 1]
-	end
-	return graphs_color
-end -- >}
-
 -- marks a single sub-cell (slot = half-cell column index, level = sub-row
--- from the bottom) in the shared grid.
-local function brightness(c) -- >{
-	return c.r + c.g + c.b
-end -- >}
-
+-- from the bottom) in the shared grid. Cores are drawn darkest-first (see
+-- build_grid), so a later (paler) curve simply overwrites an earlier
+-- (darker) one wherever they land on the same cell.
 local function mark_point(grid, vres, slot, level, color) -- >{
 	local global_row = vres - 1 - level
 	local row = math.floor(global_row / 3)
@@ -151,11 +106,7 @@ local function mark_point(grid, vres, slot, level, color) -- >{
 	local bitpos = p * 2 + sub_c
 	local cell = grid[row][col]
 	cell.mask = ffi_bit.bor(cell.mask, ffi_bit.lshift(1, bitpos))
-	-- the lighter shade always wins where lines overlap, regardless of
-	-- which core's line reaches this cell first or last
-	if not cell.color or brightness(color) > brightness(cell.color) then
-		cell.color = color
-	end
+	cell.color = color
 end -- >}
 
 -- joins two consecutive samples (one half-cell column apart) with a
@@ -188,27 +139,61 @@ local function build_grid(ids, graph_w, graph_h, now) -- >{
 	local sample_cols = graph_w * 2
 	local vres = graph_h * 3
 
+	-- one pass: collect each core's visible-window samples and its own
+	-- average, plus a running sum/count over every core's samples pooled
+	-- together for the group average
+	local visible, core_mean = {}, {}
+	local pool_sum, pool_n = 0, 0
 	for _, id in ipairs(ids) do
 		local h = history[id]
 		if h then
-			local color = pick_color(id)
-			local prev_slot, prev_level = nil, nil
+			local samples, sum, n = {}, 0, 0
 			for slot = 0, sample_cols - 1 do
 				local seconds_ago = time_interval * (1 - slot / sample_cols)
 				local v = value_at_time(h, now - seconds_ago)
 				if v ~= nil then
-					local frac = clamp01(v / 100)
-					local level = math.floor(frac * (vres - 1) + 0.5)
-					if prev_slot ~= nil then
-						mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, color)
-					else
-						mark_point(grid, vres, slot, level, color)
-					end
-					prev_slot, prev_level = slot, level
-				else
-					prev_slot, prev_level = nil, nil
+					samples[#samples + 1] = { slot = slot, v = v }
+					sum = sum + v
+					n = n + 1
 				end
 			end
+			if n > 0 then
+				visible[id] = samples
+				core_mean[id] = sum / n
+				pool_sum = pool_sum + sum
+				pool_n = pool_n + n
+			end
+		end
+	end
+	if pool_n == 0 then return grid end
+	local group_mean = pool_sum / pool_n
+
+	-- rank cores by distance from the group average, farthest first -- this
+	-- is both the palette assignment order (darkest to palest) and the draw
+	-- order (darkest drawn first, palest drawn last so it stays on top)
+	local ranked = {}
+	for id in pairs(visible) do ranked[#ranked + 1] = id end
+	table.sort(ranked, function(a, b)
+		local da = math.abs(core_mean[a] - group_mean)
+		local db = math.abs(core_mean[b] - group_mean)
+		if da == db then return a < b end -- stable tie-break, avoids flicker
+		return da > db
+	end)
+
+	local palette = build_gradient(GRAPH_DARK, GRAPH_LIGHT, #ranked)
+
+	for rank, id in ipairs(ranked) do
+		local color = palette[rank]
+		local prev_slot, prev_level = nil, nil
+		for _, s in ipairs(visible[id]) do
+			local level_frac = clamp01(s.v / 100)
+			local level = math.floor(level_frac * (vres - 1) + 0.5)
+			if prev_slot ~= nil and s.slot == prev_slot + 1 then
+				mark_diagonal(grid, vres, prev_slot, prev_level, s.slot, level, color)
+			else
+				mark_point(grid, vres, s.slot, level, color)
+			end
+			prev_slot, prev_level = s.slot, level
 		end
 	end
 
@@ -217,7 +202,7 @@ end -- >}
 
 local function redraw(pane) -- >{
 	local now = MonotonicNow()
-	local pct = core_usage_percents()
+	local pct = (cache[1] and cache[1].cores) or {}
 	local ids = {}
 	for id, v in pairs(pct) do
 		ids[#ids + 1] = id
@@ -266,7 +251,6 @@ return { -- >{
 	title = "CPU Cores Graph",
 	min_w = 20,
 	min_h = 8,
-	default_delay = refresh_rate,
 	redraw = redraw,
 } -- >}
 
