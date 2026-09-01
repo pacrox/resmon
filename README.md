@@ -272,3 +272,12 @@ statement and its motivation.
 MIT License (plus a symbolic, non-binding protest statement — see
 [LICENSE.txt](LICENSE.txt)).
 
+---
+
+<a href="https://awesometui.com/resmon">
+<img src="https://awesometui.com/og.webp" width="300"><br>
+<b>resmon - Terminal UI application</b><br>
+A zero-dependency TUI resource monitor written in LuaJIT<br>
+awesometui.com
+</a>
+
