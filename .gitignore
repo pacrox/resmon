@@ -9,4 +9,5 @@ _*
 /resmon
 *.o
 /generated/
+/build/
 

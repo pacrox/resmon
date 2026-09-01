@@ -19,7 +19,12 @@ GEN_HEADERS := generated/core_bc.h generated/sextant_chars_bc.h \
 
 HOME_CONFIG := $(HOME)/.config/resmon
 
-.PHONY: all clean install-config
+VERSION := $(shell sed -n 's/^local VERSION = "\(.*\)"/\1/p' src/core.lua)
+DIST_ARCH := linux-x86_64
+DIST_NAME := resmon-v$(VERSION)-$(DIST_ARCH)
+DIST_DIR := build/$(DIST_NAME)
+
+.PHONY: all clean install-config dist
 
 all: $(BIN)
 
@@ -66,6 +71,21 @@ install-config:
 	test -f $(HOME_CONFIG)/config.lua || cp config/config.lua.example $(HOME_CONFIG)/config.lua
 	cp fetchers/*.lua $(HOME_CONFIG)/addons/fetchers/
 	cp mods/*.lua $(HOME_CONFIG)/addons/mods/
+
+dist: $(BIN)
+	rm -rf $(DIST_DIR)
+	mkdir -p $(DIST_DIR)/images $(DIST_DIR)/config/addons/fetchers $(DIST_DIR)/config/addons/mods
+	cp $(BIN) $(DIST_DIR)/resmon
+	cp dist/install.sh $(DIST_DIR)/install.sh
+	chmod +x $(DIST_DIR)/install.sh
+	cp dist/README.md $(DIST_DIR)/README.md
+	cp images/desktop1.png images/desktop2.png images/desktop3.png images/desktop4.png $(DIST_DIR)/images/
+	cp config/config.lua.example config/config-full.lua.example config/config-horiz.lua.example $(DIST_DIR)/config/
+	cp config/config-full.lua.example $(DIST_DIR)/config/config.lua
+	cp fetchers/*.lua $(DIST_DIR)/config/addons/fetchers/
+	cp mods/*.lua $(DIST_DIR)/config/addons/mods/
+	tar -C build -czf build/$(DIST_NAME).tar.gz $(DIST_NAME)
+	@echo "built build/$(DIST_NAME).tar.gz"
 
 clean:
 	rm -f host.o $(BIN) $(GEN_HEADERS)
