@@ -274,10 +274,8 @@ MIT License (plus a symbolic, non-binding protest statement — see
 
 ---
 
-<a href="https://awesometui.com/resmon">
-<img src="https://awesometui.com/og.webp" width="300"><br>
+<a href="https://awesometui.com/resmon"><img src="https://awesometui.com/og.webp" width="300"></a><br>
 <b>resmon - Terminal UI application</b><br>
 A zero-dependency TUI resource monitor written in LuaJIT<br>
-awesometui.com
-</a>
+<a href="https://awesometui.com/resmon"><i>awesometui.com</i></a>
 
