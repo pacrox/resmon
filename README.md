@@ -8,6 +8,7 @@ at runtime — LuaJIT is linked in statically.
 <tr>
 <td><img src="images/sample-CPU1.gif" width="100%"></td>
 <td><img src="images/sample-CPU2.gif" width="100%"></td>
+<td><img src="images/sample-GPU1.gif" width="100%"></td>
 </tr>
 </table>
 
