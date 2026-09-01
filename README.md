@@ -4,6 +4,13 @@ Zero-dependency TUI resource monitor, written in LuaJIT and compiled into a
 single self-contained ELF binary. No external Lua/LuaJIT install is required
 at runtime — LuaJIT is linked in statically.
 
+<table>
+<tr>
+<td><img src="images/sample-CPU1.gif" width="100%"></td>
+<td><img src="images/sample-CPU2.gif" width="100%"></td>
+</tr>
+</table>
+
 ## Features
 
 - Low-CPU, fixed-tick main loop; data is fetched once per source and shared
