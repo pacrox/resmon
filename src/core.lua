@@ -1,5 +1,6 @@
 local ffi = require("ffi")
 local sChar = require("sextant_chars")
+Write = require("block_fonts") -- global: public draw API for custom modules, see block_fonts.lua
 
 -- FFI declarations >{
 ffi.cdef[[

@@ -13,7 +13,8 @@ LUAJIT_STATIC_LIB := $(shell gcc -print-file-name=libluajit-5.1.a)
 LDLIBS := $(LUAJIT_STATIC_LIB) -lm -ldl
 
 BIN := resmon
-GEN_HEADERS := generated/core_bc.h generated/sextant_chars_bc.h \
+GEN_HEADERS := generated/core_bc.h generated/sextant_chars_bc.h generated/block_fonts_bc.h \
+               generated/big_font_bc.h generated/med_font_bc.h \
                generated/fetch_cpu_average_bc.h generated/fetch_mem_bc.h generated/fetch_top_bc.h \
                generated/mod_cpu_bc.h generated/mod_mem_bc.h generated/mod_top_bc.h
 
@@ -41,6 +42,18 @@ generated/core_bc.h: src/core.lua
 generated/sextant_chars_bc.h: src/sextant_chars.lua
 	@mkdir -p generated
 	$(LUAJIT) -b -n sextant_chars -t h src/sextant_chars.lua generated/sextant_chars_bc.h
+
+generated/block_fonts_bc.h: src/block_fonts.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n block_fonts -t h src/block_fonts.lua generated/block_fonts_bc.h
+
+generated/big_font_bc.h: src/big_font.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n big_font -t h src/big_font.lua generated/big_font_bc.h
+
+generated/med_font_bc.h: src/med_font.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n med_font -t h src/med_font.lua generated/med_font_bc.h
 
 generated/fetch_cpu_average_bc.h: src/fetch_cpu_average.lua
 	@mkdir -p generated
