@@ -1269,7 +1269,13 @@ end
 local SAMPLE_FILL_TICKS = 120
 
 local function prefill_module_history(mod, cache, real_fetchers, fake, w, h, aopts)
-	local interval = (mod.opts.interval and mod.opts.interval[1]) or 30
+	-- must mirror the exact same resolution order a graph module applies to
+	-- its own `time_interval` internally (entry.interval or opts.interval[1]),
+	-- otherwise -o "{interval=N}" changes the module's displayed window but
+	-- prefill keeps backfilling history across the addon's static declared
+	-- default instead -- too little history for N > default (older part of
+	-- the window renders empty) or a mismatched sample density for N < default
+	local interval = (aopts.options and aopts.options.interval) or (mod.opts.interval and mod.opts.interval[1]) or 30
 	local delays = slot_delays(mod.sample, real_fetchers, aopts)
 	local last_run = {}
 	local real_now = MonotonicNow()
