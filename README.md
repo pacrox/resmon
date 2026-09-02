@@ -22,16 +22,21 @@ at runtime — LuaJIT is linked in statically.
 - Custom fetchers and modules are loaded as plain-text `.lua` files at
   startup (no recompilation needed) — the same contract used by the built-in
   fetchers and modules.
-- Every fetcher and module is self-documenting and independently runnable:
-  `resmon <addon_name> -i/-h/-s/-d` inspects, samples or demos any one of
-  them standalone, without a config file — see
-  [Standalone addon CLI](#standalone-addon-cli).
 
-### Built-in modules
+### Standalone addon CLI Feature
 
-- `cpu` — load average (1/5/15).
-- `mem` — RAM usage.
-- `top` — process list, row count auto-fit to the pane height.
+Every fetcher and module is self-documenting and independently runnable —
+`resmon <addon_name> -i/-h/-s/-d` inspects, samples, or demos any one of
+them standalone, without a config file. See
+[Standalone addon CLI](#standalone-addon-cli) for the full syntax.
+
+### Built-in Monitors
+
+| Fetcher | Module | Description |
+|---|---|---|
+| `CPU_Average` | `cpu` | Load average (1/5/15). |
+| `MEM` | `mem` | RAM usage. |
+| `TOP` | `top` | Process list, row count auto-fit to the pane height. |
 
 ### Fetchers
 
@@ -52,16 +57,9 @@ file, both in the `fetchers` list and in the `fetcher = {...}` array of
 whichever modules reference them.
 
 **The `_INTEL` fetchers are untested** — no Intel hardware was available to
-verify them against, so they're released without any guarantee they work
-correctly. They were written from documented sysfs paths / driver names
-(`coretemp`, i915's `gt_*_freq_mhz`, `intel_gpu_top -J`), not validated on
-real hardware. `GPU_Top_INTEL` in particular synthesizes its own JSON
-shape from `intel_gpu_top`'s output to stay a true drop-in for
-`gpu`/`gpu_graph`, and is the most speculative of the four — see
-its own file for exactly what it assumes. If one of these doesn't work on
-your system, the dependent module degrades to stale/no data rather than
-crashing (same fetcher-error contract as any other fetcher) — reports of
-what actually works (or doesn't) on real Intel hardware are welcome.
+verify them, so they ship without guarantee. A failing one degrades the
+dependent module to stale/no data rather than crashing; reports from real
+Intel hardware are welcome.
 
 | Fetcher | OS/Arch | Source | Depend. | Notes |
 |---|---|---|---|---|
@@ -95,20 +93,19 @@ what actually works (or doesn't) on real Intel hardware are welcome.
 - `gpu` — GPU resource usage bars (via `amdgpu_top -J`).
 - `gpu_graph` — GPU engine/performance-counter usage, scrolling history graph (via `amdgpu_top -J`).
 
-`gpu` and `gpu_graph` require `GPU_Top_AMD` (`amdgpu_top` on `$PATH`,
-AMD GPU) or, untested, `GPU_Top_INTEL` (`intel_gpu_top` on `$PATH`, Intel
-iGPU); every other custom module's fetcher reads directly from `/proc` and
-`/sys` via FFI.
+`gpu`/`gpu_graph` need `GPU_Top_AMD` or `GPU_Top_INTEL` (external process);
+every other custom module reads `/proc`/`/sys` directly via FFI.
 
 ### Modules → fetcher(s)
 
-The GPU line on `clock_graph`/`clock_avg_graph` is optional: include
-`GPU_Clock_AMD` (or, untested, `GPU_Clock_INTEL`) in that module instance's
-`fetcher = {...}` list to show it, omit it to draw CPU-only — there is no
-separate on/off option, the dependency list itself is the toggle.
-`temp_graph` needs both of its fetchers; if they
-refresh at different rates, the graph repeats each one's last value between
-its own updates.
+Some fetchers are architecture-specific (see the `_AMD`/`_INTEL` note
+above) and can be swapped for an equivalent that returns the same data
+shape, no module changes needed. Use the `NONE` sentinel in a
+multi-fetcher module's `fetcher = {...}` list to leave a slot
+intentionally empty — e.g. skip the GPU line on
+`clock_graph`/`clock_avg_graph`. `temp_graph` needs both of its fetchers;
+if they refresh at different rates, the graph repeats each one's last
+value between updates.
 
 | Module | Fetcher(s) |
 |---|---|
@@ -120,8 +117,8 @@ its own updates.
 | `cpu_pulse` | `CPU_Cores` |
 | `cpu_avg_value` | `CPU_Cores` |
 | `temp_graph` | `CPU_Temp_AMD`, `GPU_Temp_AMD` |
-| `clock_graph` | `CPU_Clock` (+ `GPU_Clock_AMD` optional) |
-| `clock_avg_graph` | `CPU_Clock` (+ `GPU_Clock_AMD` optional) |
+| `clock_graph` | `CPU_Clock`, `GPU_Clock_AMD` |
+| `clock_avg_graph` | `CPU_Clock`, `GPU_Clock_AMD` |
 | `gpu` | `GPU_Top_AMD` |
 | `gpu_graph` | `GPU_Top_AMD` |
 
@@ -164,9 +161,14 @@ make install-config
 ```
 
 Copies the custom fetchers from `fetchers/` into `~/.config/resmon/addons/fetchers/`
-and the custom modules from `mods/` into `~/.config/resmon/addons/mods/`, and
+and the custom modules from `mods/` into `~/.config/resmon/addons/mods/`,
 installs `config/config.lua.example` as `~/.config/resmon/config.lua` if one
-doesn't already exist there. Copy `resmon` itself wherever you like on `$PATH`.
+doesn't already exist there, and copies the addon-authoring skeletons
+(`fetcher_addon_sample.lua`, `module_addon_sample.lua`, `ADDON-AUTHORING.md`)
+into `~/.config/resmon/addons/` — see [Contributing](#contributing).
+
+`make install-config` does **not** install the `resmon` binary itself —
+copy it wherever you like on `$PATH` separately.
 
 ## Usage
 
@@ -177,13 +179,13 @@ doesn't already exist there. Copy `resmon` itself wherever you like on `$PATH`.
 | Option | Description |
 |---|---|
 | `--config-dir <path>` | Override the default config dir (`~/.config/resmon`); implies `<dir>/addons/{fetchers,mods}` unless overridden below |
-| `-c`, `--config-file <path>` | Read this config file instead of `<config-dir>/config.lua` — does **not** affect where fetchers/modules are searched, so situational config files can live anywhere on disk while still using the normally installed addons |
+| `-c`<br>`--config-file <path>` | Read this config file instead of `<config-dir>/config.lua` — does **not** affect where fetchers/modules are searched, so situational config files can live anywhere on disk while still using the normally installed addons |
 | `--fetchers-dir <path>` | Override the fetchers dir (default: `<config-dir>/addons/fetchers`) |
 | `--modules-dir <path>` | Override the custom modules dir (default: `<config-dir>/addons/mods`) |
 | `--include <path>` | Additively search this flat directory first (fetchers and modules mixed together), on top of the normal dirs above — shadows a same-named installed addon; handy for developing or testing one addon without installing it. A relative `<path>` resolves against the shell's current directory, not the config dir |
 | `--list` | List every installed fetcher and module (base + custom + `--include`), with a short description each |
-| `-h`, `--help` | Show help and exit |
-| `-v`, `--version` | Show version and exit |
+| `-h`<br>`--help` | Show help and exit |
+| `-v`<br>`--version` | Show version and exit |
 
 All of the above are recognized anywhere on the command line, including
 before or after a standalone `<addon_name>` (see below) — e.g.
@@ -212,17 +214,19 @@ cumulative — `resmon MEM -i -s` runs both, in order:
 
 | Mode | Description |
 |---|---|
-| `-i`, `--info` | Full info/metadata: author, description, hardware, dependency check (files/programs it needs, with an OK/MISSING marker), default options |
-| `-h`, `--help` | The addon's own configurable options, with their defaults |
-| `-s`, `--sample [-x <w>] [-y <h>]` | One-shot static sample in the current terminal scrollback — real data for a fetcher, fake (or `-f`-attached real) data for a module, sized to at most half the terminal width and 12 rows unless `-x`/`-y` is given |
-| `-d`, `--demo [-x <w>] [-y <h>]` | Live-updating demo, fullscreen unless `-x`/`-y` is given (`P` pause, `Q`/`ESC`/`CTRL-C` quit, terminal fully restored on exit) |
+| `-i`<br>`--info` | Full info/metadata: author, description, hardware, dependency check (files/programs it needs, with a `VALID`/`FAULT` marker), default options |
+| `-h`<br>`--help` | The addon's own configurable options, with their defaults |
+| `-s`<br>`--sample` | One-shot static sample in the current terminal scrollback — real data for a fetcher, fake (or `-f`-attached real) data for a module, sized to at most half the terminal width and 12 rows unless `-x`/`-y` is given |
+| `-d`<br>`--demo` | Live-updating demo, fullscreen unless `-x`/`-y` is given (`P` pause, `Q`/`ESC`/`CTRL-C` quit, terminal fully restored on exit) |
 
 Common to both `-s` and `-d`:
 
 | Option | Description |
 |---|---|
-| `-r`, `--refresh <seconds>` | Override the tick rate: a real fetcher's own refresh, or — for a module — an attached real fetcher's refresh and/or the fake-data tick pace |
-| `-o`, `--options <{lua-table}>` | Merge these options onto the addon's config, exactly like the matching fields on a `config.lua` entry (e.g. `-o "{interval=5}"` on a history-graph module) |
+| `-x`<br>`--width <w>` | Override the pane width (module `-s`/`-d` only) |
+| `-y`<br>`--height <h>` | Override the pane height (module `-s`/`-d` only) |
+| `-r`<br>`--refresh <seconds>` | Override the tick rate: a real fetcher's own refresh, or — for a module — an attached real fetcher's refresh and/or the fake-data tick pace |
+| `-o`<br>`--options <{lua-table}>` | Merge these options onto the addon's config, exactly like the matching fields on a `config.lua` entry (e.g. `-o "{interval=5}"` on a history-graph module) |
 
 Module-only: `-f`, `--fetcher <name> [<name> ...]` attaches real fetcher(s)
 instead of fake data, one per `sample` slot in order (`NONE` for an
@@ -316,12 +320,19 @@ modules laid out horizontally instead.
 
 Code development contributions are welcome.
 
+Want to write a custom fetcher or module? `config/fetcher_addon_sample.lua`
+and `config/module_addon_sample.lua` are ready-to-copy, heavily commented
+skeletons covering the full addon contract; `config/ADDON-AUTHORING.md`
+walks through both. `make install-config` also installs them into
+`~/.config/resmon/addons/`.
+
 ## A Note on Licensing and Protest
 
-The author notes that the Federative Republic of Brazil, the State of California,
-and the State of Colorado have enacted legislation effectively outlawing free,
-non-tracking, and decentralized open-source software by demanding mandatory
-operating-system-level identity certification.
+The author notes that **the Federative Republic of Brazil**, **the State of
+California**, and **the State of Colorado** have enacted legislation
+effectively outlawing free, non-tracking, and decentralized open-source
+software by demanding mandatory operating-system-level identity
+certification.
 
 In protest, the author has attached a symbolic statement to this Software's
 license expressing that they do not wish it to be used within said
