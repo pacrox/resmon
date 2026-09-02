@@ -491,29 +491,84 @@ local PATH_FLAGS = {
 	["--include"] = "include_dir",
 }
 
-local USAGE_LABEL_W = 26 -- widest label is "-c, --config-file <file>" (24 chars) + 2-space gap
+-- resmon's cosmetic pagination convention (see _CLAUDE/Resmon0_4_0-Remarks-2.md):
+-- every CLI output starts with a banner and ends with exactly one trailing
+-- blank line, with column-aligned tables sized off the live terminal width.
+-- "PRINT_MIN_TERM_W" floors get_term_size() when stdout isn't a tty (a
+-- piped/redirected invocation) -- ioctl(TIOCGWINSZ) leaves the winsz struct
+-- zeroed in that case, which would otherwise wrap at width 0.
+local PRINT_MIN_TERM_W = 80
+local PRINT_MIN_WRAP_W = 20
+
+local function term_width()
+	local w = get_term_size()
+	if not w or w <= 0 then w = PRINT_MIN_TERM_W end
+	return w
+end
+
+-- greedy word-wrap; always returns at least one line (possibly empty)
+local function wrap_text(text, width)
+	width = math.max(width, PRINT_MIN_WRAP_W)
+	local lines, line = {}, ""
+	for word in tostring(text):gmatch("%S+") do
+		local candidate = (line == "" and word or (line .. " " .. word))
+		if #candidate > width and line ~= "" then
+			lines[#lines + 1] = line
+			line = word
+		else
+			line = candidate
+		end
+	end
+	lines[#lines + 1] = line
+	return lines
+end
+
+local function print_banner()
+	io.write("resmon - TUI resource monitor v" .. VERSION .. "\n\n")
+end
+
+-- "<title>:\n    <command>\n\n" -- used for every usage-style single-command
+-- block (main --help's Usage:/Addons CLI:, addon no-mode's Usage:, --list's
+-- trailing Use: reminder)
+local function print_usage_line(title, command)
+	io.write(title .. ":\n")
+	io.write("    " .. command .. "\n\n")
+end
+
+-- generic 2-column "<title>:\n  <label><descr>\n...\n\n" table; label column
+-- width = max(24, longest label + 4), 2 of those extra chars are the row's
+-- own leading indent, the other 2 are the trailing gap before descr
+local function print_two_col_table(title, rows)
+	io.write(title .. ":\n")
+	local longest = 0
+	for _, row in ipairs(rows) do longest = math.max(longest, #row[1]) end
+	local width = math.max(24, longest + 4)
+	local wrap_w = term_width() - width
+	for _, row in ipairs(rows) do
+		local label, descr = row[1], row[2] or ""
+		local lines = wrap_text(descr, wrap_w)
+		io.write(string.format("%-" .. width .. "s%s\n", "  " .. label, lines[1]))
+		for i = 2, #lines do
+			io.write(string.rep(" ", width) .. lines[i] .. "\n")
+		end
+	end
+	io.write("\n")
+end
 
 local function print_usage()
-	io.write("Usage: resmon [options]\n")
-	io.write("       resmon <addon_name> [options]   Run a single addon standalone (see -h/-i/-s/-d on the addon itself)\n\n")
-	io.write("Options:\n")
-	local function opt(label, descr)
-		io.write(string.format("  %-" .. USAGE_LABEL_W .. "s%s\n", label, descr))
-	end
-	local function cont(descr)
-		io.write(string.rep(" ", 2 + USAGE_LABEL_W) .. descr .. "\n")
-	end
-	opt("--config-dir <dir>", "Override the default config dir (~/.config/resmon); implies")
-	cont("<dir>/addons/{fetchers,mods} unless overridden below")
-	opt("-c, --config-file <file>", "Read this config file instead of <config-dir>/config.lua")
-	cont("(does not affect where fetchers/mods are searched)")
-	opt("--fetchers-dir <dir>", "Override the fetchers dir (default: <config-dir>/addons/fetchers)")
-	opt("--modules-dir <dir>", "Override the custom modules dir (default: <config-dir>/addons/mods)")
-	opt("--include <path>", "Additively search this flat dir first (fetchers and modules mixed);")
-	cont("a relative <path> resolves against the current working dir")
-	opt("--list", "List every installed fetcher and module, with a short description")
-	opt("-h, --help", "Show this help message and exit")
-	opt("-v, --version", "Show version and exit")
+	print_banner()
+	print_usage_line("Usage", "resmon [options]")
+	print_two_col_table("Options", {
+		{ "--config-dir <dir>", "Override the default config dir (~/.config/resmon); implies <dir>/addons/{fetchers,mods} unless overridden below" },
+		{ "-c, --config-file <file>", "Read this config file instead of <config-dir>/config.lua (does not affect where fetchers/mods are searched)" },
+		{ "--fetchers-dir <dir>", "Override the fetchers dir (default: <config-dir>/addons/fetchers)" },
+		{ "--modules-dir <dir>", "Override the custom modules dir (default: <config-dir>/addons/mods)" },
+		{ "--include <path>", "Additively search this flat dir first (fetchers and modules mixed); a relative <path> resolves against the current working dir" },
+		{ "--list", "List every installed fetcher and module, with a short description" },
+		{ "-h, --help", "Show this help message and exit" },
+		{ "-v, --version", "Show version and exit" },
+	})
+	print_usage_line("Addons CLI", "resmon <addon_name> [options]")
 end
 
 -- pulls the PATH_FLAGS out of `args` wherever they appear, since they're
@@ -974,44 +1029,74 @@ local function resolve_cli_addon(addon_name, fetchers_dir, modules_dir, include_
 	return nil, nil, nil, "no such addon 'fetch." .. addon_name .. "' or 'mod." .. addon_name .. "'"
 end
 
-local function print_opts_help(opts)
+-- "Module:"/"Fetcher:\n    <name>    - <short_descr>\n\n" -- single-row
+-- header, literal 4-space gaps either side of the name per the doc's own
+-- specimen (no dynamic alignment needed, there's only ever one row)
+local function print_addon_kind_header(kind, addon)
+	io.write((kind == "fetch" and "Fetcher" or "Module") .. ":\n")
+	io.write("    " .. addon.info.name .. "    - " .. tostring(addon.info.short_descr) .. "\n\n")
+end
+
+-- 3-column addon-options table ("Options:\n  <name><default><descr>\n...\n\n"):
+-- name column = max(18, longest name + 4), default column = max(8, longest
+-- "= <default>" + 2), description gets the remaining width
+local function print_options_table(opts)
+	io.write("Options:\n")
 	local keys = sorted_keys(opts)
 	if #keys == 0 then
-		io.write("    (no configurable options)\n")
+		io.write("    (no configurable options)\n\n")
 		return
 	end
+	local name_w, default_w = 0, 0
+	local defaults = {}
 	for _, k in ipairs(keys) do
-		local default, descr = opts[k][1], opts[k][2]
-		io.write(string.format("    %-12s%-12s%s\n", k, tostring(default), descr or ""))
+		local d = "= " .. tostring(opts[k][1])
+		defaults[k] = d
+		name_w = math.max(name_w, #k)
+		default_w = math.max(default_w, #d)
 	end
+	name_w = math.max(18, name_w + 4)
+	default_w = math.max(8, default_w + 2)
+	local wrap_w = term_width() - name_w - default_w
+	for _, k in ipairs(keys) do
+		local descr = opts[k][2] or ""
+		local lines = wrap_text(descr, wrap_w)
+		io.write(string.format("%-" .. name_w .. "s%-" .. default_w .. "s%s\n", "  " .. k, defaults[k], lines[1]))
+		for i = 2, #lines do
+			io.write(string.rep(" ", name_w + default_w) .. lines[i] .. "\n")
+		end
+	end
+	io.write("\n")
 end
 
--- -h/--help output: "Name:" block (addon.info.name/long_name) followed by
--- "Options:" (the addon's own configurable options, with defaults) -- not
--- the same thing as no-mode (print_addon_usage), which lists the CLI flags
--- this addon understands
-local function print_addon_help(addon)
-	io.write("Name:\n")
-	io.write("    " .. addon.info.name .. "      " .. addon.info.long_name .. "\n\n")
-	io.write("Options:\n")
-	print_opts_help(addon.opts)
+-- -h/--help output: "Fetcher:"/"Module:" header block, then the addon's own
+-- configurable options with defaults -- not the same thing as no-mode
+-- (print_addon_usage), which lists the CLI flags this addon understands
+local function print_addon_help(kind, addon)
+	print_addon_kind_header(kind, addon)
+	print_options_table(addon.opts)
 end
 
--- no-mode output: the addon's long_name plus the list of CLI flags IT
+-- no-mode output: Usage: line, kind header, then the CLI flags this addon
 -- accepts -- distinct from -h/--help, which lists the addon's own
 -- *configurable options* (opts), not the CLI flags
 local function print_addon_usage(kind, addon)
-	io.write(addon.info.long_name .. "\n\n")
-	io.write("Options:\n")
-	io.write("  -i, --info                       Show addon info/metadata\n")
-	io.write("  -h, --help                       Show this addon's configurable options\n")
-	io.write("  -s, --sample [-x <w>] [-y <h>]    One-shot static sample\n")
-	io.write("  -d, --demo [-x <w>] [-y <h>]      Live-updating demo (P=pause, Q/ESC/CTRL-C=quit)\n")
-	io.write("  -r, --refresh <value>             Set the refresh rate (real or fake-data tick rate)\n")
-	io.write("  -o, --options <{lua-table}>       Merge these options onto the addon's config, like config.lua\n")
+	print_usage_line("Usage", "resmon <addon_name> [options]")
+	print_addon_kind_header(kind, addon)
+	local rows = {
+		{ "-i, --info", "Show addon info/metadata" },
+		{ "-h, --help", "Show this addon's configurable options" },
+		{ "-s, --sample", "One-shot static sample" },
+		{ "-d, --demo", "Live-updating demo (P=pause, Q/ESC/CTRL-C=quit)" },
+		{ "-x, --width <w>", "Set the pane width (module -s/-d only)" },
+		{ "-y, --height <h>", "Set the pane height (module -s/-d only)" },
+		{ "-r, --refresh <value>", "Set the refresh rate (real or fake-data tick rate)" },
+		{ "-o, --options <{lua-table}>", "Merge these options onto the addon's config, like config.lua" },
+	}
 	if kind == "mod" then
-		io.write("  -f, --fetcher <f> [<f> ...]      Use real fetcher(s) instead of fake data (NONE ok)\n")
+		rows[#rows + 1] = { "-f, --fetcher <f> [<f> ...]", "Use real fetcher(s) instead of fake data (NONE ok)" }
 	end
+	print_two_col_table("Options", rows)
 end
 
 -- `target` is addon-author-authored data (from the addon's own info.dependencies),
@@ -1027,32 +1112,58 @@ local function check_dependency(target)
 	return os.execute("command -v '" .. escaped .. "' >/dev/null 2>&1") == 0
 end
 
+-- metadata table row: label right-aligned in 12 chars + ": ", value
+-- word-wrapped in the remaining width, continuation indented to column 15
+local function print_metadata_row(label, value)
+	local prefix = string.format("%12s: ", label)
+	local lines = wrap_text(tostring(value), term_width() - 14)
+	io.write(prefix .. lines[1] .. "\n")
+	for i = 2, #lines do
+		io.write(string.rep(" ", 14) .. lines[i] .. "\n")
+	end
+end
+
 local function print_addon_info(kind, addon)
 	local info = addon.info
 	io.write(info.long_name .. " (" .. info.name .. ")\n")
 	if info.short_descr then io.write(info.short_descr .. "\n") end
 	io.write("\n")
-	if info.description then io.write(info.description .. "\n\n") end
-	io.write("Author:  " .. tostring(info.author) .. "\n")
-	io.write("Release: " .. tostring(info.release) .. "\n")
-	if info.date then io.write("Date:    " .. tostring(info.date) .. "\n") end
+	if info.description then
+		-- info.description is often authored as a hand-wrapped [[...]] Lua
+		-- string in the addon source; wrap_text's %S+ scan treats those
+		-- embedded newlines as ordinary whitespace, so it collapses and
+		-- re-wraps to the live terminal width instead of the source's own
+		-- line breaks
+		for _, line in ipairs(wrap_text(info.description, term_width())) do
+			io.write(line .. "\n")
+		end
+		io.write("\n")
+	end
+	print_metadata_row("Author", info.author)
+	print_metadata_row("Release", info.release)
+	if info.date then print_metadata_row("Date", info.date) end
 	if kind == "fetch" then
-		if info.data_type then io.write("Data:    " .. info.data_type .. "\n") end
-		if info.hardware then io.write("Hardware: " .. info.hardware .. "\n") end
-		io.write("Refresh: " .. tostring(addon.default_delay) .. "s (default)\n")
+		if info.data_type then print_metadata_row("Data Type", info.data_type) end
+		if info.hardware then print_metadata_row("Hardware", info.hardware) end
+		print_metadata_row("Refresh", tostring(addon.default_delay) .. "s (default)")
 	elseif info.dependencies then
 		-- module info.dependencies is a list of data_type strings (docs-only),
 		-- NOT the same semantic as a fetcher's info.dependencies below
-		io.write("Depends on: " .. table.concat(info.dependencies, ", ") .. "\n")
+		print_metadata_row("Depends on", table.concat(info.dependencies, ", "))
 	end
-	io.write("\nOptions:\n")
-	print_opts_help(addon.opts)
+	io.write("\n")
+	print_options_table(addon.opts)
 	if kind == "fetch" and info.dependencies then
-		io.write("\nDependencies:\n")
+		io.write("Dependencies:\n")
+		local wrap_w = term_width() - 24
 		for _, dep in ipairs(info.dependencies) do
 			local ok = check_dependency(dep.target)
-			io.write("  [" .. (ok and "OK" or "MISSING") .. "] " .. dep.target .. " -- " .. tostring(dep.descr) .. "\n")
+			io.write("  [" .. (ok and "VALID" or "FAULT") .. "] " .. dep.target .. "\n")
+			for _, line in ipairs(wrap_text(dep.descr, wrap_w)) do
+				io.write(string.rep(" ", 24) .. line .. "\n")
+			end
 		end
+		io.write("\n")
 	end
 end
 
@@ -1319,7 +1430,7 @@ local function run_module_sample(base_name, aopts, modules_dir, fetchers_dir, in
 	Frame(outer, mod.title, "normal")
 	mod.redraw({ x = 1, y = anchor_row, w = w, h = h })
 	flush_output()
-	io.write("\27[" .. (anchor_row + outer_h) .. ";1H\n")
+	io.write("\27[" .. (anchor_row + outer_h) .. ";1H")
 	io.flush()
 end
 
@@ -1459,6 +1570,13 @@ local function run_addon_cli(addon_name, rest_args, path_opts)
 	local kind, base_name, addon, err = resolve_cli_addon(addon_name, fetchers_dir, modules_dir, include_dir, aopts.options)
 	if not kind then fatal("unknown addon '" .. addon_name .. "': " .. tostring(err)) end
 
+	-- one banner for the whole invocation, regardless of how many modes run
+	-- (modes are cumulative, e.g. `-h -i -d`) -- the footer isn't a separate
+	-- print, it falls out of every leaf output always ending in exactly one
+	-- blank line (see print_two_col_table/print_options_table and the
+	-- explicit io.write("\n") added below for the pane-based modes)
+	print_banner()
+
 	if #aopts.modes == 0 then
 		print_addon_usage(kind, addon)
 		return
@@ -1468,13 +1586,15 @@ local function run_addon_cli(addon_name, rest_args, path_opts)
 		if mode == "info" then
 			print_addon_info(kind, addon)
 		elseif mode == "help" then
-			print_addon_help(addon)
+			print_addon_help(kind, addon)
 		elseif mode == "sample" then
 			if kind == "fetch" then run_fetcher_sample(addon)
 			else run_module_sample(base_name, aopts, modules_dir, fetchers_dir, include_dir) end
+			io.write("\n")
 		elseif mode == "demo" then
 			if kind == "fetch" then run_fetcher_demo(addon, aopts)
 			else run_module_demo(base_name, aopts, modules_dir, fetchers_dir, include_dir) end
+			io.write("\n")
 		end
 	end
 end
@@ -1502,22 +1622,22 @@ local function run_list(fetchers_dir, modules_dir, include_dir)
 		end
 		table.sort(names)
 
-		io.write(title .. ":\n")
-		local printed = {}
+		local rows, printed = {}, {}
 		for _, name in ipairs(names) do
 			if not printed[name] then
 				printed[name] = true
 				local addon, err = try(name)
 				if addon then
-					io.write(string.format("  %-20s%s\n", addon.info.name, addon.info.short_descr or ""))
+					rows[#rows + 1] = { addon.info.name, addon.info.short_descr or "" }
 				elseif authoritative[name] then
 					io.stderr:write("resmon: skipping '" .. name .. "': " .. tostring(err or "invalid shape") .. "\n")
 				end
 			end
 		end
-		io.write("\n")
+		print_two_col_table(title, rows)
 	end
 
+	print_banner()
 	print_section("Fetchers", BASE_FETCHERS, fetchers_dir, function(name)
 		return try_fetch(name, fetchers_dir, include_dir)
 	end)
@@ -1525,9 +1645,7 @@ local function run_list(fetchers_dir, modules_dir, include_dir)
 		return try_mod(name, modules_dir, include_dir)
 	end)
 
-	io.write("Use:\n")
-	io.write("    resmon [<addon_type>.]<addon_name> [options]\n\n")
-	io.write("to get further informations on the installed addons.\n")
+	print_usage_line("Use", "resmon [<addon_type>.]<addon_name> [options]")
 end
 -- >}
 
