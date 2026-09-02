@@ -349,16 +349,28 @@ performance-counter sub-block over time, colored by distance from the
 group average, darkest-first.]],
 		dependencies = { "GPU engine/memory usage (amdgpu_top JSON)" },
 	},
-	-- static (non-animated) fake snapshot: the real data is opaque JSON text
-	-- parsed by regex, not a flat set of noised leaves, so a fixed literal
-	-- string is used instead of noise -- see fake_fetcher.lua's "plain
-	-- string" leaf rule
+	-- fake snapshot: the real data is opaque regex-parsed JSON text, not a
+	-- flat set of noised leaves, so every numeric field is noised via
+	-- fake_fetcher's template/args leaf and spliced into the same JSON
+	-- shape redraw() already knows how to parse, so every curve drifts
+	-- independently instead of sitting on a frozen snapshot; `raw` stays a
+	-- static placeholder since no params[i].fetch ever reads it (they all
+	-- read ctx.grbm/ctx.grbm2/ctx.totals instead)
 	sample = {
 		{
 			raw = "{}",
-			totals = '{"GFX":{"unit":"%","value":42.0},"Compute":{"unit":"%","value":10.0}}',
-			grbm = '{"Depth Block":{"unit":"%","value":12.3},"Color Block":{"unit":"%","value":8.1},"Geometry Engine":{"unit":"%","value":5.0},"Graphics Pipe":{"unit":"%","value":15.2},"Primitive Assembly":{"unit":"%","value":3.4},"Shader Export":{"unit":"%","value":9.9},"Shader Processor Interpolator":{"unit":"%","value":11.1},"Texture Pipe":{"unit":"%","value":22.0}}',
-			grbm2 = '{"Command Processor -  Compute":{"unit":"%","value":4.0},"Command Processor -  Fetcher":{"unit":"%","value":2.0},"Command Processor - Graphics":{"unit":"%","value":6.0},"Efficiency Arbiter":{"unit":"%","value":1.0},"Render Backend Memory Interface":{"unit":"%","value":7.0},"RunList Controller":{"unit":"%","value":0.5},"SDMA":{"unit":"%","value":3.0},"Texture Cache per Pipe":{"unit":"%","value":18.0},"Unified Translation Cache Level-2":{"unit":"%","value":9.0}}',
+			totals = {
+				template = '{"GFX":{"unit":"%%","value":%.1f},"Compute":{"unit":"%%","value":%.1f}}',
+				args = { { 0, 100 }, { 0, 100 } },
+			},
+			grbm = {
+				template = '{"Depth Block":{"unit":"%%","value":%.1f},"Color Block":{"unit":"%%","value":%.1f},"Geometry Engine":{"unit":"%%","value":%.1f},"Graphics Pipe":{"unit":"%%","value":%.1f},"Primitive Assembly":{"unit":"%%","value":%.1f},"Shader Export":{"unit":"%%","value":%.1f},"Shader Processor Interpolator":{"unit":"%%","value":%.1f},"Texture Pipe":{"unit":"%%","value":%.1f}}',
+				args = { { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 } },
+			},
+			grbm2 = {
+				template = '{"Command Processor -  Compute":{"unit":"%%","value":%.1f},"Command Processor -  Fetcher":{"unit":"%%","value":%.1f},"Command Processor - Graphics":{"unit":"%%","value":%.1f},"Efficiency Arbiter":{"unit":"%%","value":%.1f},"Render Backend Memory Interface":{"unit":"%%","value":%.1f},"RunList Controller":{"unit":"%%","value":%.1f},"SDMA":{"unit":"%%","value":%.1f},"Texture Cache per Pipe":{"unit":"%%","value":%.1f},"Unified Translation Cache Level-2":{"unit":"%%","value":%.1f}}',
+				args = { { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 }, { 0, 100 } },
+			},
 		},
 	},
 } -- >}

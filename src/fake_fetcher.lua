@@ -8,6 +8,9 @@
 --   { min, max }                    -- scalar leaf: continuous 1D noise in [min,max]
 --   { {min,max}, count = N }        -- N independently-noised scalar leaves, as a 1..N array
 --   { record = {...}, count = N }   -- N independently-generated copies of a record template
+--   { template = "...", args = {node, ...} } -- each arg built independently, then
+--                                    -- string.format(template, unpack(built_args))
+--                                    -- (e.g. noised numbers embedded in a JSON string)
 --   { v1, v2, ... }                 -- (length ~= 2, or non-numeric) pick leaf: cycles v1..vN by row index
 --   "literal" / 42                  -- static leaf, used as-is
 --   { key = node, ... }             -- named sub-table, recursed key by key
@@ -83,6 +86,14 @@ function M.new() -- >{
 				out[i] = build(node.record, path .. "[" .. i .. "]", i)
 			end
 			return out
+		end
+
+		if type(node.template) == "string" and type(node.args) == "table" then
+			local built = {}
+			for i, arg in ipairs(node.args) do
+				built[i] = build(arg, path .. ".args[" .. i .. "]", idx)
+			end
+			return string.format(node.template, unpack(built))
 		end
 
 		if type(node[1]) == "table" and #node[1] == 2 and type(node.count) == "number" then

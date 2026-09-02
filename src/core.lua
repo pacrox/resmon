@@ -488,6 +488,7 @@ local PATH_FLAGS = {
 	["--config-file"] = "config_file",
 	["--fetchers-dir"] = "fetchers_dir",
 	["--modules-dir"] = "modules_dir",
+	["--include"] = "include_dir",
 }
 
 local USAGE_LABEL_W = 26 -- widest label is "-c, --config-file <file>" (24 chars) + 2-space gap
@@ -508,6 +509,9 @@ local function print_usage()
 	cont("(does not affect where fetchers/mods are searched)")
 	opt("--fetchers-dir <dir>", "Override the fetchers dir (default: <config-dir>/addons/fetchers)")
 	opt("--modules-dir <dir>", "Override the custom modules dir (default: <config-dir>/addons/mods)")
+	opt("--include <path>", "Additively search this flat dir first (fetchers and modules mixed);")
+	cont("a relative <path> resolves against the current working dir")
+	opt("--list", "List every installed fetcher and module, with a short description")
 	opt("-h, --help", "Show this help message and exit")
 	opt("-v, --version", "Show version and exit")
 end
@@ -555,13 +559,17 @@ local function parse_args(rest)
 	end
 end
 
+-- opts.include_dir (from --include, may be nil) is returned as-is, never
+-- joined onto config_dir: a relative --include path resolves against the
+-- process's own CWD, same as any relative path Lua's loadfile receives,
+-- since core.lua never chdir()s
 local function resolve_paths(opts)
 	local home = os.getenv("HOME") or ""
 	local config_dir = opts.config_dir or (home .. "/.config/resmon")
 	local config_file = opts.config_file or (config_dir .. "/config.lua")
 	local fetchers_dir = opts.fetchers_dir or (config_dir .. "/addons/fetchers")
 	local modules_dir = opts.modules_dir or (config_dir .. "/addons/mods")
-	return config_file, fetchers_dir, modules_dir
+	return config_file, fetchers_dir, modules_dir, opts.include_dir
 end
 -- >}
 
@@ -684,8 +692,21 @@ end
 -- the config entry is passed through as the chunk's varargs (`...`), same as
 -- for display modules, so a fetcher wrapping an external process (e.g.
 -- GPU_Top_AMD spawning amdgpu_top) can size its own polling interval from
--- entry.refresh instead of hardcoding one independently of the scheduler
-local function resolve_fetcher(entry, fetchers_dir)
+-- entry.refresh instead of hardcoding one independently of the scheduler.
+-- `include_dir` (from --include, additive, may be nil) is tried FIRST, ahead
+-- of both base and normal custom lookup, so a same-named addon under
+-- development shadows the installed one -- applies uniformly to the
+-- config-driven scheduler and the standalone CLI, since both funnel through
+-- this same function.
+local function resolve_fetcher(entry, fetchers_dir, include_dir)
+	if include_dir then
+		local chunk = loadfile(include_dir .. "/" .. entry.name .. ".lua")
+		if chunk then
+			local ok, f = pcall(chunk, entry)
+			if not ok then return nil, f end
+			return f
+		end
+	end
 	if BASE_FETCHERS[entry.name] then
 		local loader = package.preload["fetch_" .. entry.name:lower()]
 		if not loader then return nil, "missing base fetcher 'fetch_" .. entry.name:lower() .. "'" end
@@ -701,12 +722,22 @@ local function resolve_fetcher(entry, fetchers_dir)
 	return f
 end
 
--- pure loader: resolves entry.mod to a chunk (base preload or custom
--- loadfile) and runs it with the caller-supplied `cache` array as its second
--- vararg -- the config-driven scheduler path (resolve_module, below) builds
--- `cache` from fetch_cache; the standalone CLI path (run_addon_cli) builds
--- its own (fake data, or -f-attached real fetchers), sharing this same load
-local function resolve_module_chunk(entry, modules_dir, cache)
+-- pure loader: resolves entry.mod to a chunk (base preload, --include, or
+-- custom loadfile) and runs it with the caller-supplied `cache` array as its
+-- second vararg -- the config-driven scheduler path (resolve_module, below)
+-- builds `cache` from fetch_cache; the standalone CLI path (run_addon_cli)
+-- builds its own (fake data, or -f-attached real fetchers), sharing this
+-- same load. `include_dir` shadows both base and normal custom lookup, same
+-- rationale as resolve_fetcher above.
+local function resolve_module_chunk(entry, modules_dir, cache, include_dir)
+	if include_dir then
+		local chunk = loadfile(include_dir .. "/" .. entry.mod .. ".lua")
+		if chunk then
+			local ok, mod = pcall(chunk, entry, cache)
+			if not ok then return nil, mod end
+			return mod
+		end
+	end
 	if BASE_MODULES[entry.mod] then
 		local loader = package.preload["mod_" .. entry.mod]
 		if not loader then return nil, "missing base module 'mod_" .. entry.mod .. "'" end
@@ -728,7 +759,7 @@ end
 -- builds the module's cache array (direct references into fetch_cache[name].data,
 -- ordered per entry.fetcher, NONE translated to a hole) then delegates to
 -- resolve_module_chunk
-local function resolve_module(entry, modules_dir, fetch_cache)
+local function resolve_module(entry, modules_dir, fetch_cache, include_dir)
 	local cache = {}
 	for i, fname in ipairs(entry.fetcher or {}) do
 		if fname == NONE then
@@ -739,7 +770,7 @@ local function resolve_module(entry, modules_dir, fetch_cache)
 			cache[i] = fc.data
 		end
 	end
-	return resolve_module_chunk(entry, modules_dir, cache)
+	return resolve_module_chunk(entry, modules_dir, cache, include_dir)
 end
 -- >}
 
@@ -805,6 +836,25 @@ local function sorted_keys(t)
 	return keys
 end
 
+-- lists every file in `path` ending in `suffix`, with the suffix stripped
+-- (same FFI opendir/readdir/closedir pattern as ListProcPids above); used
+-- by --list to discover custom addon names without shelling out
+local function list_dir(path, suffix)
+	local names = {}
+	local dir = libc.opendir(path)
+	if dir == nil then return names end
+	while true do
+		local entry = libc.readdir(dir)
+		if entry == nil then break end
+		local name = ffi.string(entry.d_name)
+		if #name > #suffix and name:sub(- #suffix) == suffix then
+			names[#names + 1] = name:sub(1, #name - #suffix)
+		end
+	end
+	libc.closedir(dir)
+	return names
+end
+
 -- addon-specific flags only: path flags (--config-dir/-c etc.) are already
 -- extracted centrally by extract_path_opts() before this ever runs, since
 -- they're accepted on either side of the addon_name token
@@ -813,7 +863,7 @@ end
 -- stdout so their output sits in scrollback above the (alt-screen) -d demo,
 -- readable once the user quits it
 local function parse_addon_args(args)
-	local aopts = { modes = {} }
+	local aopts = { modes = {}, options = {} }
 	local i = 1
 	while i <= #args do
 		local flag = args[i]
@@ -848,6 +898,24 @@ local function parse_addon_args(args)
 				aopts.fetchers[#aopts.fetchers + 1] = args[i + 1]
 				i = i + 1
 			end
+		elseif flag == "-o" or flag == "--options" then
+			local value = args[i + 1]
+			if not value then io.stderr:write("resmon: missing value for " .. flag .. "\n"); os.exit(1) end
+			-- trusted local CLI input (the user's own machine), evaluated as a Lua
+			-- table-constructor expression and merged onto the addon's synthetic
+			-- entry exactly like a config.lua modules={{...}} entry would be
+			local chunk, load_err = load("return " .. value)
+			if not chunk then
+				io.stderr:write("resmon: invalid -o/--options value: " .. tostring(load_err) .. "\n")
+				os.exit(1)
+			end
+			local ok, tbl = pcall(chunk)
+			if not ok or type(tbl) ~= "table" then
+				io.stderr:write("resmon: -o/--options value must evaluate to a Lua table\n")
+				os.exit(1)
+			end
+			aopts.options = tbl
+			i = i + 1
 		else
 			io.stderr:write("resmon: unknown option '" .. flag .. "'\n")
 			os.exit(1)
@@ -857,14 +925,25 @@ local function parse_addon_args(args)
 	return aopts
 end
 
-local function try_fetch(name, fetchers_dir)
-	local f, err = resolve_fetcher({ name = name }, fetchers_dir)
+-- shallow-merges `options` (from -o/--options, may be nil) onto a fresh
+-- synthetic entry table -- options win, since they're the explicit CLI
+-- override; this is exactly the shape a config.lua modules={{...}} entry
+-- already takes, so no addon-side changes are needed for -o to work
+local function synth_entry(base, options)
+	if options then
+		for k, v in pairs(options) do base[k] = v end
+	end
+	return base
+end
+
+local function try_fetch(name, fetchers_dir, include_dir, options)
+	local f, err = resolve_fetcher(synth_entry({ name = name }, options), fetchers_dir, include_dir)
 	if f and valid_fetcher(f) then return f end
 	return nil, err
 end
 
-local function try_mod(name, modules_dir)
-	local m, err = resolve_module_chunk({ mod = name }, modules_dir, {})
+local function try_mod(name, modules_dir, include_dir, options)
+	local m, err = resolve_module_chunk(synth_entry({ mod = name }, options), modules_dir, {}, include_dir)
 	if m and valid_module(m) then return m end
 	return nil, err
 end
@@ -875,22 +954,22 @@ end
 -- closure is NOT usable, see run_module_sample/run_module_demo); a bare
 -- name tries fetch.<name> first, then mod.<name>, first shape-valid match
 -- wins
-local function resolve_cli_addon(addon_name, fetchers_dir, modules_dir)
+local function resolve_cli_addon(addon_name, fetchers_dir, modules_dir, include_dir, options)
 	local fname = addon_name:match("^fetch%.(.+)$")
 	if fname then
-		local f, err = try_fetch(fname, fetchers_dir)
+		local f, err = try_fetch(fname, fetchers_dir, include_dir, options)
 		if f then return "fetch", fname, f, nil end
 		return nil, nil, nil, err or "invalid fetcher shape"
 	end
 	local mname = addon_name:match("^mod%.(.+)$")
 	if mname then
-		local m, err = try_mod(mname, modules_dir)
+		local m, err = try_mod(mname, modules_dir, include_dir, options)
 		if m then return "mod", mname, m, nil end
 		return nil, nil, nil, err or "invalid module shape"
 	end
-	local f = try_fetch(addon_name, fetchers_dir)
+	local f = try_fetch(addon_name, fetchers_dir, include_dir, options)
 	if f then return "fetch", addon_name, f, nil end
-	local m = try_mod(addon_name, modules_dir)
+	local m = try_mod(addon_name, modules_dir, include_dir, options)
 	if m then return "mod", addon_name, m, nil end
 	return nil, nil, nil, "no such addon 'fetch." .. addon_name .. "' or 'mod." .. addon_name .. "'"
 end
@@ -898,13 +977,24 @@ end
 local function print_opts_help(opts)
 	local keys = sorted_keys(opts)
 	if #keys == 0 then
-		io.write("  (no configurable options)\n")
+		io.write("    (no configurable options)\n")
 		return
 	end
 	for _, k in ipairs(keys) do
 		local default, descr = opts[k][1], opts[k][2]
-		io.write(string.format("  %-12s default: %-8s %s\n", k, tostring(default), descr or ""))
+		io.write(string.format("    %-12s%-12s%s\n", k, tostring(default), descr or ""))
 	end
+end
+
+-- -h/--help output: "Name:" block (addon.info.name/long_name) followed by
+-- "Options:" (the addon's own configurable options, with defaults) -- not
+-- the same thing as no-mode (print_addon_usage), which lists the CLI flags
+-- this addon understands
+local function print_addon_help(addon)
+	io.write("Name:\n")
+	io.write("    " .. addon.info.name .. "      " .. addon.info.long_name .. "\n\n")
+	io.write("Options:\n")
+	print_opts_help(addon.opts)
 end
 
 -- no-mode output: the addon's long_name plus the list of CLI flags IT
@@ -917,9 +1007,9 @@ local function print_addon_usage(kind, addon)
 	io.write("  -h, --help                       Show this addon's configurable options\n")
 	io.write("  -s, --sample [-x <w>] [-y <h>]    One-shot static sample\n")
 	io.write("  -d, --demo [-x <w>] [-y <h>]      Live-updating demo (P=pause, Q/ESC/CTRL-C=quit)\n")
-	if kind == "fetch" then
-		io.write("  -r, --refresh <value>            Set the refresh rate used for -d\n")
-	else
+	io.write("  -r, --refresh <value>             Set the refresh rate (real or fake-data tick rate)\n")
+	io.write("  -o, --options <{lua-table}>       Merge these options onto the addon's config, like config.lua\n")
+	if kind == "mod" then
 		io.write("  -f, --fetcher <f> [<f> ...]      Use real fetcher(s) instead of fake data (NONE ok)\n")
 	end
 end
@@ -966,6 +1056,37 @@ local function print_addon_info(kind, addon)
 	end
 end
 
+-- scans a string for the "key":{"unit":"U","value":V} leaf shape used
+-- throughout amdgpu_top/intel_gpu_top-derived JSON (see GPU_Top_AMD/INTEL's
+-- own extract_field/extract_object helpers, which read the exact same
+-- shape) and returns { {key, value, unit}, ... } for every leaf found
+-- anywhere in the string, regardless of nesting depth -- a single flat
+-- gmatch pass, not a real JSON parser
+local function format_json_leaves(str)
+	local leaves = {}
+	for k, unit, value in str:gmatch('"([^"]+)"%s*:%s*{%s*"unit"%s*:%s*"([^"]*)"%s*,%s*"value"%s*:%s*([%-%d%.eE]+)') do
+		leaves[#leaves + 1] = { k, value, unit }
+	end
+	return leaves
+end
+
+-- a data value that is a JSON-looking string (raw payload text from a
+-- fetcher like GPU_Top_AMD) is illegible dumped verbatim -- render its
+-- recognized "key":{"unit":,"value":} leaves as plain "key: value unit"
+-- lines instead; a string with no recognized leaves falls back to a short
+-- opaque placeholder rather than a raw dump
+local function format_string_value(v)
+	if not v:match("^%s*{") then return nil end
+	local leaves = format_json_leaves(v)
+	if #leaves == 0 then return { ("(opaque data, %d bytes)"):format(#v) } end
+	local lines = {}
+	for _, leaf in ipairs(leaves) do
+		local key, value, unit = leaf[1], leaf[2], leaf[3]
+		lines[#lines + 1] = key .. ": " .. value .. (unit ~= "" and (" " .. unit) or "")
+	end
+	return lines
+end
+
 local function print_data_value(indent, k, v, ranges)
 	if type(v) == "table" then
 		io.write(indent .. tostring(k) .. ":\n")
@@ -973,6 +1094,16 @@ local function print_data_value(indent, k, v, ranges)
 			print_data_value(indent .. "  ", sk, v[sk], nil)
 		end
 		return
+	end
+	if type(v) == "string" then
+		local lines = format_string_value(v)
+		if lines then
+			io.write(indent .. tostring(k) .. ":\n")
+			for _, line in ipairs(lines) do
+				io.write(indent .. "  " .. line .. "\n")
+			end
+			return
+		end
 	end
 	local s = tostring(v)
 	local r = ranges and ranges[k]
@@ -1032,7 +1163,7 @@ end
 
 local function sample_pane_size(aopts, min_w, min_h)
 	local term_w, term_h = get_term_size()
-	local w = aopts.width or math.max(math.min(math.floor(term_w / 2), min_w + 10), min_w)
+	local w = aopts.width or math.max(math.floor(term_w / 2), min_w)
 	local h = aopts.height or math.max(math.min(12, term_h - 4), min_h)
 	return w, h
 end
@@ -1041,14 +1172,14 @@ end
 -- given at all); an explicit NONE in the -f list leaves that slot genuinely
 -- empty, matching the real app's semantics; a slot fetcher that fails to
 -- resolve falls back to fake data rather than aborting the whole demo/sample
-local function build_module_cache(sample, fetch_specs, fetchers_dir)
+local function build_module_cache(sample, fetch_specs, fetchers_dir, include_dir)
 	local cache, real_fetchers = {}, {}
 	for i = 1, #sample do
 		local fname = fetch_specs and fetch_specs[i]
 		if fname == NONE then
 			cache[i] = nil
 		elseif fname then
-			local f, err = resolve_fetcher({ name = fname }, fetchers_dir)
+			local f, err = resolve_fetcher({ name = fname }, fetchers_dir, include_dir)
 			if f and valid_fetcher(f) then
 				cache[i] = {}
 				real_fetchers[i] = f
@@ -1063,16 +1194,44 @@ local function build_module_cache(sample, fetch_specs, fetchers_dir)
 	return cache, real_fetchers
 end
 
-local function tick_module_cache(cache, sample, real_fetchers, fake)
-	local fresh = fake.generate(sample)
+-- default pace (seconds) for regenerating a fake-data slot when no -r
+-- override is given -- lets the standalone CLI's fake-data drift be
+-- observed tick by tick instead of redrawing continuously
+local FAKE_TICK_DEFAULT = 1.0
+
+-- aopts.refresh (if given) overrides every slot uniformly; otherwise a
+-- real-fetcher-backed slot uses that fetcher's own default_delay, a fake
+-- slot uses FAKE_TICK_DEFAULT
+local function slot_delays(sample, real_fetchers, aopts)
+	local delays = {}
 	for i = 1, #sample do
-		if cache[i] then
+		delays[i] = aopts.refresh or (real_fetchers[i] and real_fetchers[i].default_delay) or FAKE_TICK_DEFAULT
+	end
+	return delays
+end
+
+-- ticks any (real or fake) slot whose own delay has elapsed since its last
+-- update, tracked per-slot in `last_run` (mutated in place). poll_real=false
+-- never re-invokes a real fetcher -- used only by prefill_module_history's
+-- synthetic 120-tick replay, where re-polling a real fetcher would either
+-- block for a very long time (a pipe-based fetcher, paced by its own
+-- production rate) or corrupt a delta-based fetcher's reading (successive
+-- calls with no real time gap between them read as ~0); a real slot's
+-- cache just keeps whatever a single proper fetch already put there.
+local function tick_module_cache(cache, sample, real_fetchers, fake, delays, last_run, now, poll_real)
+	local fresh
+	for i = 1, #sample do
+		if cache[i] and now - (last_run[i] or 0) >= delays[i] then
+			last_run[i] = now
 			if real_fetchers[i] then
-				local data, status = real_fetchers[i].fetch()
-				if status == 0 then
-					for k, v in pairs(data) do cache[i][k] = v end
+				if poll_real then
+					local data, status = real_fetchers[i].fetch()
+					if status == 0 then
+						for k, v in pairs(data) do cache[i][k] = v end
+					end
 				end
 			else
+				fresh = fresh or fake.generate(sample)
 				for k, v in pairs(fresh[i]) do cache[i][k] = v end
 			end
 		end
@@ -1084,12 +1243,14 @@ end
 -- at load time, e.g. mod.clock_graph's optional GPU line -- see
 -- resolve_module's own cache-before-load ordering, which this mirrors),
 -- then for real with a properly-sized cache built from that shape
-local function load_module_for_demo(base_name, aopts, modules_dir, fetchers_dir)
-	local probe = resolve_module_chunk({ mod = base_name }, modules_dir, {})
+local function load_module_for_demo(base_name, aopts, modules_dir, fetchers_dir, include_dir)
+	local probe_entry = synth_entry({ mod = base_name }, aopts.options)
+	local probe = resolve_module_chunk(probe_entry, modules_dir, {}, include_dir)
 	if not probe or not valid_module(probe) then fatal("invalid module shape for 'mod." .. base_name .. "'") end
 
-	local cache, real_fetchers = build_module_cache(probe.sample, aopts.fetchers, fetchers_dir)
-	local mod = resolve_module_chunk({ mod = base_name }, modules_dir, cache)
+	local cache, real_fetchers = build_module_cache(probe.sample, aopts.fetchers, fetchers_dir, include_dir)
+	local real_entry = synth_entry({ mod = base_name }, aopts.options)
+	local mod = resolve_module_chunk(real_entry, modules_dir, cache, include_dir)
 	if not mod or not valid_module(mod) then fatal("invalid module shape for 'mod." .. base_name .. "'") end
 
 	return mod, cache, real_fetchers
@@ -1107,30 +1268,36 @@ end
 -- FILL_TICKS times, last call wins.
 local SAMPLE_FILL_TICKS = 120
 
-local function prefill_module_history(mod, cache, real_fetchers, fake, w, h)
+local function prefill_module_history(mod, cache, real_fetchers, fake, w, h, aopts)
 	local interval = (mod.opts.interval and mod.opts.interval[1]) or 30
+	local delays = slot_delays(mod.sample, real_fetchers, aopts)
+	local last_run = {}
 	local real_now = MonotonicNow()
 	local real_monotonic_now = MonotonicNow
 	for i = 0, SAMPLE_FILL_TICKS - 1 do
 		local fake_t = real_now - interval + interval * i / (SAMPLE_FILL_TICKS - 1)
 		MonotonicNow = function() return fake_t end
-		tick_module_cache(cache, mod.sample, real_fetchers, fake)
+		tick_module_cache(cache, mod.sample, real_fetchers, fake, delays, last_run, fake_t, false)
 		mod.redraw({ x = 1, y = 1, w = w, h = h })
 	end
 	MonotonicNow = real_monotonic_now
 	output_buf = {} -- discard the warm-up passes' redundant emitted output
 end
 
-local function run_module_sample(base_name, aopts, modules_dir, fetchers_dir)
+local function run_module_sample(base_name, aopts, modules_dir, fetchers_dir, include_dir)
 	if libc.isatty(STDIN) == 0 then fatal("stdin is not a terminal") end
 
-	local mod, cache, real_fetchers = load_module_for_demo(base_name, aopts, modules_dir, fetchers_dir)
-	for _, f in pairs(real_fetchers) do sample_fetch_once(f) end -- warm up delta-based fetchers
+	local mod, cache, real_fetchers = load_module_for_demo(base_name, aopts, modules_dir, fetchers_dir, include_dir)
+	for i, f in pairs(real_fetchers) do
+		local data, status = sample_fetch_once(f)
+		if status == 0 then
+			for k, v in pairs(data) do cache[i][k] = v end
+		end
+	end
 	local fake = FakeFetcher.new()
 
 	local w, h = sample_pane_size(aopts, mod.min_w, mod.min_h)
-	prefill_module_history(mod, cache, real_fetchers, fake, w, h)
-	tick_module_cache(cache, mod.sample, real_fetchers, fake)
+	prefill_module_history(mod, cache, real_fetchers, fake, w, h, aopts)
 
 	local outer_h = h + 2
 
@@ -1150,11 +1317,13 @@ local function run_module_sample(base_name, aopts, modules_dir, fetchers_dir)
 	io.flush()
 end
 
-local function run_module_demo(base_name, aopts, modules_dir, fetchers_dir)
+local function run_module_demo(base_name, aopts, modules_dir, fetchers_dir, include_dir)
 	if libc.isatty(STDIN) == 0 then fatal("stdin is not a terminal") end
 
-	local mod, cache, real_fetchers = load_module_for_demo(base_name, aopts, modules_dir, fetchers_dir)
+	local mod, cache, real_fetchers = load_module_for_demo(base_name, aopts, modules_dir, fetchers_dir, include_dir)
 	local fake = FakeFetcher.new()
+	local delays = slot_delays(mod.sample, real_fetchers, aopts)
+	local last_run = {}
 
 	enter_raw_mode()
 	io.write(ENTER_ALT_SCREEN .. CLEAR_SCREEN .. HIDE_CURSOR)
@@ -1187,7 +1356,7 @@ local function run_module_demo(base_name, aopts, modules_dir, fetchers_dir)
 				if not aopts.height then h = nh end
 			end
 			if not paused then
-				tick_module_cache(cache, mod.sample, real_fetchers, fake)
+				tick_module_cache(cache, mod.sample, real_fetchers, fake, delays, last_run, MonotonicNow(), true)
 				draw(w, h)
 			end
 			sleep_ms(30)
@@ -1197,6 +1366,43 @@ local function run_module_demo(base_name, aopts, modules_dir, fetchers_dir)
 	leave_raw_mode()
 	io.write(RESET .. SHOW_CURSOR .. LEAVE_ALT_SCREEN)
 	io.flush()
+end
+
+-- WriteAt-based counterpart to print_data_value, used by the live -d
+-- fetcher demo: recurses into nested tables (e.g. CPU_Cores'/CPU_Clock's
+-- per-core map, otherwise silently invisible) and pretty-prints a
+-- JSON-looking string value via format_string_value (e.g. GPU_Top_AMD's raw
+-- payload fields), same rendering rules as -s, adapted to row-tracking
+-- instead of io.write
+local function write_data_value(x, row, indent, k, v, ranges)
+	if type(v) == "table" then
+		WriteAt(x, row, indent .. tostring(k) .. ":")
+		row = row + 1
+		for _, sk in ipairs(sorted_keys(v)) do
+			row = write_data_value(x, row, indent .. "  ", sk, v[sk], nil)
+		end
+		return row
+	end
+	if type(v) == "string" then
+		local lines = format_string_value(v)
+		if lines then
+			WriteAt(x, row, indent .. tostring(k) .. ":")
+			row = row + 1
+			for _, line in ipairs(lines) do
+				WriteAt(x, row, indent .. "  " .. line)
+				row = row + 1
+			end
+			return row
+		end
+	end
+	local s = tostring(v)
+	local r = ranges and ranges[k]
+	if r and type(v) == "number" then
+		local norm = math.max(0, math.min(100, (v - r[1]) / (r[2] - r[1]) * 100))
+		s = s .. " (" .. string.format("%.0f", norm) .. "%)"
+	end
+	WriteAt(x, row, indent .. tostring(k) .. " = " .. s)
+	return row + 1
 end
 
 local function run_fetcher_demo(fetcher, aopts)
@@ -1225,17 +1431,7 @@ local function run_fetcher_demo(fetcher, aopts)
 				if status == 0 then
 					local row = 0
 					for _, k in ipairs(sorted_keys(data)) do
-						local v = data[k]
-						if type(v) ~= "table" then
-							local s = tostring(v)
-							local r = fetcher.ranges and fetcher.ranges[k]
-							if r and type(v) == "number" then
-								local norm = math.max(0, math.min(100, (v - r[1]) / (r[2] - r[1]) * 100))
-								s = s .. " (" .. string.format("%.0f", norm) .. "%)"
-							end
-							WriteAt(0, row, k .. " = " .. s)
-							row = row + 1
-						end
+						row = write_data_value(0, row, "", k, data[k], fetcher.ranges)
 					end
 				else
 					WriteAt(0, 0, "fetch error: " .. tostring(err or "unknown"))
@@ -1253,8 +1449,8 @@ end
 
 local function run_addon_cli(addon_name, rest_args, path_opts)
 	local aopts = parse_addon_args(rest_args)
-	local _, fetchers_dir, modules_dir = resolve_paths(path_opts)
-	local kind, base_name, addon, err = resolve_cli_addon(addon_name, fetchers_dir, modules_dir)
+	local _, fetchers_dir, modules_dir, include_dir = resolve_paths(path_opts)
+	local kind, base_name, addon, err = resolve_cli_addon(addon_name, fetchers_dir, modules_dir, include_dir, aopts.options)
 	if not kind then fatal("unknown addon '" .. addon_name .. "': " .. tostring(err)) end
 
 	if #aopts.modes == 0 then
@@ -1266,15 +1462,66 @@ local function run_addon_cli(addon_name, rest_args, path_opts)
 		if mode == "info" then
 			print_addon_info(kind, addon)
 		elseif mode == "help" then
-			print_opts_help(addon.opts)
+			print_addon_help(addon)
 		elseif mode == "sample" then
 			if kind == "fetch" then run_fetcher_sample(addon)
-			else run_module_sample(base_name, aopts, modules_dir, fetchers_dir) end
+			else run_module_sample(base_name, aopts, modules_dir, fetchers_dir, include_dir) end
 		elseif mode == "demo" then
 			if kind == "fetch" then run_fetcher_demo(addon, aopts)
-			else run_module_demo(base_name, aopts, modules_dir, fetchers_dir) end
+			else run_module_demo(base_name, aopts, modules_dir, fetchers_dir, include_dir) end
 		end
 	end
+end
+
+-- `--list`: enumerates every installed fetcher and module (base + custom +
+-- --include). `try(name)` is attempted for every candidate name regardless
+-- of which "kind" section it's discovered under -- a name that legitimately
+-- belongs to the other kind (or an --include-only name that isn't this
+-- kind at all) just doesn't print, silently; a name discovered in the
+-- kind's own authoritative dir (BASE_* or fetchers_dir/modules_dir) that
+-- fails to load/validate DOES warn, since that's a real broken addon.
+local function run_list(fetchers_dir, modules_dir, include_dir)
+	local function print_section(title, base_set, dir, try)
+		local names, authoritative = {}, {}
+		for name in pairs(base_set) do
+			if not authoritative[name] then authoritative[name] = true; names[#names + 1] = name end
+		end
+		for _, name in ipairs(list_dir(dir, ".lua")) do
+			if not authoritative[name] then authoritative[name] = true; names[#names + 1] = name end
+		end
+		if include_dir then
+			for _, name in ipairs(list_dir(include_dir, ".lua")) do
+				if not authoritative[name] then names[#names + 1] = name end
+			end
+		end
+		table.sort(names)
+
+		io.write(title .. ":\n")
+		local printed = {}
+		for _, name in ipairs(names) do
+			if not printed[name] then
+				printed[name] = true
+				local addon, err = try(name)
+				if addon then
+					io.write(string.format("  %-20s%s\n", addon.info.name, addon.info.short_descr or ""))
+				elseif authoritative[name] then
+					io.stderr:write("resmon: skipping '" .. name .. "': " .. tostring(err or "invalid shape") .. "\n")
+				end
+			end
+		end
+		io.write("\n")
+	end
+
+	print_section("Fetchers", BASE_FETCHERS, fetchers_dir, function(name)
+		return try_fetch(name, fetchers_dir, include_dir)
+	end)
+	print_section("Modules", BASE_MODULES, modules_dir, function(name)
+		return try_mod(name, modules_dir, include_dir)
+	end)
+
+	io.write("Use:\n")
+	io.write("    resmon [<addon_type>.]<addon_name> [options]\n\n")
+	io.write("to get further informations on the installed addons.\n")
 end
 -- >}
 
@@ -1288,6 +1535,18 @@ end
 
 local function main()
 	local path_opts, rest = extract_path_opts(arg or {})
+
+	-- `--list` is checked before the addon-name dispatch below (same
+	-- priority tier as -h/-v, but needs fetchers_dir/modules_dir/include_dir
+	-- first, which -h/-v don't) -- not a PATH_FLAGS entry since it takes no
+	-- value
+	for _, tok in ipairs(rest) do
+		if tok == "--list" then
+			local _, fetchers_dir, modules_dir, include_dir = resolve_paths(path_opts)
+			run_list(fetchers_dir, modules_dir, include_dir)
+			os.exit(0)
+		end
+	end
 
 	-- `resmon <addon_name> [options]`: the first remaining non-flag token
 	-- (path flags already stripped, wherever they appeared) switches the
@@ -1309,7 +1568,7 @@ local function main()
 	end
 
 	parse_args(rest)
-	local config_file, fetchers_dir, modules_dir = resolve_paths(path_opts)
+	local config_file, fetchers_dir, modules_dir, include_dir = resolve_paths(path_opts)
 
 	if libc.isatty(STDIN) == 0 then
 		fatal("stdin is not a terminal")
@@ -1326,7 +1585,7 @@ local function main()
 	local fetch_cache, loaded_fetchers = {}, {}
 	for _, fe in ipairs(cfg_fetchers) do
 		if not fe.not_used then
-			local fetcher, err = resolve_fetcher(fe, fetchers_dir)
+			local fetcher, err = resolve_fetcher(fe, fetchers_dir, include_dir)
 			if fetcher and valid_fetcher(fetcher) then
 				fetch_cache[fe.name] = { data = {} }
 				loaded_fetchers[#loaded_fetchers + 1] = { entry = fe, fetcher = fetcher }
@@ -1339,7 +1598,7 @@ local function main()
 	local entries, mods, mods_dict = {}, {}, {}
 	for _, e in ipairs(cfg_modules) do
 		if not e._bad then
-			local mod, err = resolve_module(e, modules_dir, fetch_cache)
+			local mod, err = resolve_module(e, modules_dir, fetch_cache, include_dir)
 			if mod and valid_module(mod) then
 				local idx = #entries + 1
 				entries[idx] = e

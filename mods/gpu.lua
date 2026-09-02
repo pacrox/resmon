@@ -128,12 +128,21 @@ return { -- >{
 usage as horizontal bars.]],
 		dependencies = { "GPU engine/memory usage (amdgpu_top JSON)" },
 	},
-	-- static (non-animated) fake snapshot -- see mod_gpu_graph.lua's note on
-	-- why this uses literal JSON text instead of noised leaves
+	-- fake snapshot: the real data is opaque regex-parsed JSON text, not a
+	-- flat set of noised leaves, so the numeric fields are noised via
+	-- fake_fetcher's template/args leaf (each %d/%.1f substituted from an
+	-- independently-seeded noise generator) and spliced into the same JSON
+	-- shape redraw() already knows how to parse, so it drifts like real data
 	sample = {
 		{
-			raw = '{"Total VRAM Usage":{"unit":"MiB","value":6200},"Total VRAM":{"unit":"MiB","value":8192},"Total GTT Usage":{"unit":"MiB","value":512},"Total GTT":{"unit":"MiB","value":8192}}',
-			totals = '{"GFX":{"unit":"%","value":42.0},"Compute":{"unit":"%","value":10.0},"Media":{"unit":"%","value":3.0}}',
+			raw = {
+				template = '{"Total VRAM Usage":{"unit":"MiB","value":%d},"Total VRAM":{"unit":"MiB","value":8192},"Total GTT Usage":{"unit":"MiB","value":%d},"Total GTT":{"unit":"MiB","value":8192}}',
+				args = { { 0, 8192 }, { 0, 8192 } },
+			},
+			totals = {
+				template = '{"GFX":{"unit":"%%","value":%.1f},"Compute":{"unit":"%%","value":%.1f},"Media":{"unit":"%%","value":%.1f}}',
+				args = { { 0, 100 }, { 0, 100 }, { 0, 100 } },
+			},
 		},
 	},
 } -- >}
