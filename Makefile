@@ -14,7 +14,7 @@ LDLIBS := $(LUAJIT_STATIC_LIB) -lm -ldl
 
 BIN := resmon
 GEN_HEADERS := generated/core_bc.h generated/sextant_chars_bc.h generated/block_fonts_bc.h \
-               generated/big_font_bc.h generated/med_font_bc.h \
+               generated/big_font_bc.h generated/med_font_bc.h generated/fake_fetcher_bc.h \
                generated/fetch_cpu_average_bc.h generated/fetch_mem_bc.h generated/fetch_top_bc.h \
                generated/mod_cpu_bc.h generated/mod_mem_bc.h generated/mod_top_bc.h
 
@@ -54,6 +54,10 @@ generated/big_font_bc.h: src/big_font.lua
 generated/med_font_bc.h: src/med_font.lua
 	@mkdir -p generated
 	$(LUAJIT) -b -n med_font -t h src/med_font.lua generated/med_font_bc.h
+
+generated/fake_fetcher_bc.h: src/fake_fetcher.lua
+	@mkdir -p generated
+	$(LUAJIT) -b -n fake_fetcher -t h src/fake_fetcher.lua generated/fake_fetcher_bc.h
 
 generated/fetch_cpu_average_bc.h: src/fetch_cpu_average.lua
 	@mkdir -p generated

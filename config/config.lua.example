@@ -31,7 +31,7 @@ return { -- >{
 	modules = {
 		{ name = "cpu", mod = "cpu", fetcher = { "CPU_Average" } },
 		{ name = "mem", mod = "mem", weight = 1, fetcher = { "MEM" } },
-		{ name = "cores", mod = "mod_cpu_cores", weight = 2, fetcher = { "CPU_Cores" } },
+		{ name = "cores", mod = "cpu_cores", weight = 2, fetcher = { "CPU_Cores" } },
 		{ name = "top", mod = "top", weight = 3, fetcher = { "TOP" } },
 	},
 } -- >}

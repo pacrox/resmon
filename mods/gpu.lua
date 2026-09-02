@@ -13,6 +13,8 @@
 
 local _, cache = ...
 
+local opts = {} -- no configurable options today; empty table still required
+
 local function extract_field(json, key) -- >{
 	local escaped_key = key:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 	local pattern = '"' .. escaped_key .. '"%s*:%s*{%s*"unit"%s*:%s*"[^"]*"%s*,%s*"value"%s*:%s*([%-%d%.eE]+)'
@@ -113,6 +115,27 @@ return { -- >{
 	min_w = 30,
 	min_h = 6,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "gpu",
+		long_name = "GPU Monitor",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "GPU engine and memory usage as horizontal bars.",
+		description = [[Draws GFX/LLM/VID engine usage and VRAM/GTT memory
+usage as horizontal bars.]],
+		dependencies = { "GPU engine/memory usage (amdgpu_top JSON)" },
+	},
+	-- static (non-animated) fake snapshot -- see mod_gpu_graph.lua's note on
+	-- why this uses literal JSON text instead of noised leaves
+	sample = {
+		{
+			raw = '{"Total VRAM Usage":{"unit":"MiB","value":6200},"Total VRAM":{"unit":"MiB","value":8192},"Total GTT Usage":{"unit":"MiB","value":512},"Total GTT":{"unit":"MiB","value":8192}}',
+			totals = '{"GFX":{"unit":"%","value":42.0},"Compute":{"unit":"%","value":10.0},"Media":{"unit":"%","value":3.0}}',
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

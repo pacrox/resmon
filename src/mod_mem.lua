@@ -2,6 +2,8 @@
 
 local _, cache = ...
 
+local opts = {} -- no configurable options today; empty table still required
+
 local bar_color = { -- >{
 	{ r = 134, g = 190, b = 67 },  -- #86be43
 	{ r = 230, g = 200, b = 60 },
@@ -46,6 +48,22 @@ return { -- >{
 	min_w = 20,
 	min_h = 4,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "mem",
+		long_name = "Memory Usage",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "RAM usage percentage as a horizontal bar.",
+		description = [[Draws the current RAM usage percentage as a single
+horizontal bar with an optional 0-100 axis, space permitting.]],
+		dependencies = { "RAM usage percentage" },
+	},
+	sample = {
+		{ percent = { 0, 100 } },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

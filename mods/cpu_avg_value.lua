@@ -5,6 +5,10 @@
 
 local entry, cache = ...
 
+local opts = { -- >{
+	size = { "big", "Font size for the value: 'big' or 'med'" },
+} -- >}
+
 local bar_colors = { -- >{
 	{ r = 134, g = 190, b = 67 },  -- green, #86be43
 	{ r = 230, g = 200, b = 60 },  -- yellow
@@ -13,7 +17,7 @@ local bar_colors = { -- >{
 } -- >}
 
 -- "big" (block-char, 6x9 per glyph) or "med" (sextant, 3x3 per glyph)
-local SIZE = (entry and entry.size) or "big"
+local SIZE = (entry and entry.size) or opts.size[1]
 
 local function redraw(pane) -- >{
 	local cores = (cache[1] and cache[1].cores) or {}
@@ -45,6 +49,23 @@ return { -- >{
 	min_w = 10,
 	min_h = 4,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "cpu_avg_value",
+		long_name = "CPU Avg Value",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Average CPU usage as a single big padded percentage.",
+		description = [[Averages per-core CPU usage into one value and draws
+it as a large character-cell number (Write.big/Write.med), space-padded
+with one fixed decimal.]],
+		dependencies = { "per-core CPU usage percentage" },
+	},
+	sample = {
+		{ cores = { { 0, 100 }, count = 8 } },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

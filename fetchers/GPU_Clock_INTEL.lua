@@ -11,6 +11,10 @@
 -- any module depending on it works unchanged -- just replace
 -- "GPU_Clock_AMD" with "GPU_Clock_INTEL" in that module's fetcher={...}.
 
+local opts = { -- >{
+	refresh = { 0.5, "Fetch refresh rate in seconds" },
+} -- >}
+
 -- card index isn't stable across systems (card0 may be an unrelated GPU on
 -- multi-GPU systems); resolved once at fetcher load by probing for the
 -- presence of the i915-specific gt_cur_freq_mhz attribute.
@@ -48,7 +52,25 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 0.5,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	info = {
+		type = "fetcher",
+		name = "GPU_Clock_INTEL",
+		data_type = "GPU clock frequency (GHz)",
+		long_name = "GPU Clock Frequency (Intel)",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Integrated GPU render clock frequency, in GHz.",
+		description = [[UNTESTED, no Intel hardware available to verify.
+Reads the i915 sysfs gt_cur/min/max_freq_mhz attributes for the integrated
+GPU's render clock -- same return shape as GPU_Clock_AMD.]],
+		hardware = "Intel iGPU",
+		dependencies = {
+			{ target = "/sys/class/drm/card0/gt_cur_freq_mhz", descr = "i915 integrated GPU render clock (probed card0-card7)" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

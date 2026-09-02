@@ -1,5 +1,9 @@
 -- Custom fetcher: per-core CPU usage percentage, from /proc/stat
 
+local opts = { -- >{
+	refresh = { 0.33, "Fetch refresh rate in seconds" },
+} -- >}
+
 local prev_times = nil
 
 local function clamp01(v) -- >{
@@ -48,7 +52,24 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 0.33,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	info = {
+		type = "fetcher",
+		name = "CPU_Cores",
+		data_type = "per-core CPU usage percentage",
+		long_name = "CPU Cores Usage",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Per-core CPU usage percentage, from a /proc/stat delta.",
+		description = [[Reads /proc/stat and computes each core's usage
+percentage from the delta between consecutive samples.]],
+		hardware = "any",
+		dependencies = {
+			{ target = "/proc/stat", descr = "Linux per-core CPU tick counters" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

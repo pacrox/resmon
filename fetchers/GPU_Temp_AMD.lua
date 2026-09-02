@@ -1,5 +1,9 @@
 -- Custom fetcher: GPU temperature, from hwmon sysfs (amdgpu)
 
+local opts = { -- >{
+	refresh = { 0.5, "Fetch refresh rate in seconds" },
+} -- >}
+
 -- hwmon device index isn't stable across systems, only the driver name is;
 -- resolved once at fetcher load by scanning hwmon0..hwmon31 for a name match.
 local function find_hwmon_temp_path(driver_name) -- >{
@@ -25,7 +29,24 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 0.5,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	ranges = { temp_c = { 20, 100 } },
+	info = {
+		type = "fetcher",
+		name = "GPU_Temp_AMD",
+		data_type = "GPU temperature (Celsius)",
+		long_name = "GPU Temperature (AMD)",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "GPU temperature, from the amdgpu hwmon driver.",
+		description = [[Reads the amdgpu hwmon node's temp1_input.]],
+		hardware = "AMD GPU",
+		dependencies = {
+			{ target = "/sys/class/hwmon", descr = "Scanned for a hwmon node named 'amdgpu'" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

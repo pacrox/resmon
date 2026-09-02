@@ -22,10 +22,14 @@
 -- (reads as 0). VRAM/GTT bars in mod_gpu.lua will also read 0:
 -- intel_gpu_top's JSON has no equivalent "Total VRAM/GTT Usage" fields.
 
+local opts = { -- >{
+	refresh = { 0.5, "Fetch refresh rate in seconds (also sizes intel_gpu_top's own -s sampling interval)" },
+} -- >}
+
 local entry = ...
 -- entry.refresh sizes intel_gpu_top's own -s <ms> sampling interval, same
 -- rationale as GPU_Top_AMD
-local REFRESH_MS = math.max(math.floor(((entry and entry.refresh) or 0.5) * 1000), 100)
+local REFRESH_MS = math.max(math.floor(((entry and entry.refresh) or opts.refresh[1]) * 1000), 100)
 
 local gpu_pipe = nil
 local pipe_failed = false
@@ -74,6 +78,26 @@ end -- >}
 return { -- >{
 	fetch = fetch,
 	default_delay = REFRESH_MS / 1000,
+	opts = opts,
+	info = {
+		type = "fetcher",
+		name = "GPU_Top_INTEL",
+		data_type = "GPU engine usage (intel_gpu_top JSON)",
+		long_name = "GPU Top (Intel)",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Integrated GPU engine usage, from a shared intel_gpu_top -J stream.",
+		description = [[UNTESTED, the most speculative of the Intel
+fetchers. Spawns intel_gpu_top -J once as a long-running NDJSON stream and
+synthesizes a totals object with the same GFX/Media keys GPU_Top_AMD
+produces, so mod_gpu/mod_gpu_graph work unchanged. No GRBM/GRBM2
+counterpart exists for Intel; VRAM/GTT read as 0.]],
+		hardware = "Intel iGPU",
+		dependencies = {
+			{ target = "intel_gpu_top", descr = "External program providing GPU engine JSON telemetry" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

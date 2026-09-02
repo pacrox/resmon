@@ -29,32 +29,32 @@ return { -- >{
 	modules = {
 		{
 			name = "cores_graph",
-			mod = "mod_cpu_cores_graph", weight = 2,
+			mod = "cpu_cores_graph", weight = 2,
 			fetcher = { "CPU_Cores" },
 		},
 		{
 			name = "gpu_graph",
-			mod = "mod_gpu_graph", weight = 2,
+			mod = "gpu_graph", weight = 2,
 			fetcher = { "GPU_Top_AMD" },
 		},
 		{
 			name = "clock",
-			mod = "mod_clock_graph", weight = 1,
+			mod = "clock_graph", weight = 1,
 			fetcher = { "CPU_Clock" },
 		},
 		{
 			name = "clock_avg",
-			mod = "mod_clock_avg_graph", weight = 1,
+			mod = "clock_avg_graph", weight = 1,
 			fetcher = { "CPU_Clock", "GPU_Clock_AMD" },
 		},
 		{
 			name = "temp",
-			mod = "mod_temp_graph", weight = 1.25,
+			mod = "temp_graph", weight = 1.25,
 			fetcher = { "CPU_Temp_AMD", "GPU_Temp_AMD" },
 		},
 		{
 			name = "pulse",
-			mod = "mod_cpu_pulse", weight = .75,
+			mod = "cpu_pulse", weight = .75,
 			fetcher = { "CPU_Cores" },
 		},
 		{
@@ -64,7 +64,7 @@ return { -- >{
 		},
 		{
 			name = "gpu",
-			mod = "mod_gpu", weight = -15,
+			mod = "gpu", weight = -15,
 			fetcher = { "GPU_Top_AMD" },
 		},
 		{

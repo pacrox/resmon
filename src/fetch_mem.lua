@@ -1,5 +1,9 @@
 -- Base fetcher: MEM usage (percentage of RAM in use), from /proc/meminfo
 
+local opts = { -- >{
+	refresh = { 1.5, "Fetch refresh rate in seconds" },
+} -- >}
+
 local function fetch() -- >{
 	local raw = ReadProcFile("/proc/meminfo")
 	if not raw then return {}, 1, "failed to read /proc/meminfo" end
@@ -17,7 +21,26 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 1.5,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	ranges = { percent = { 0, 100 } },
+	info = {
+		type = "fetcher",
+		name = "MEM",
+		data_type = "RAM usage percentage",
+		long_name = "Memory Usage",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Percentage of RAM currently in use.",
+		description = [[Reads /proc/meminfo and reports the percentage of RAM
+in use, preferring MemAvailable when the kernel exposes it, falling back to
+MemFree+Buffers+Cached otherwise.]],
+		hardware = "any",
+		dependencies = {
+			{ target = "/proc/meminfo", descr = "Linux memory-info pseudo-file" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

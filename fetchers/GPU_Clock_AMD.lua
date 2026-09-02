@@ -1,5 +1,9 @@
 -- Custom fetcher: GPU core clock frequency, from the amdgpu hwmon node
 
+local opts = { -- >{
+	refresh = { 0.5, "Fetch refresh rate in seconds" },
+} -- >}
+
 -- hwmon device index isn't stable across systems, only the driver name is;
 -- resolved once at fetcher load by scanning hwmon0..hwmon31 for a name match.
 local function find_hwmon_path(driver_name) -- >{
@@ -54,7 +58,24 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 0.5,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	info = {
+		type = "fetcher",
+		name = "GPU_Clock_AMD",
+		data_type = "GPU clock frequency (GHz)",
+		long_name = "GPU Clock Frequency (AMD)",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "GPU core clock frequency, in GHz.",
+		description = [[Reads the amdgpu hwmon node's freq1_input, plus the
+supported clock range from pp_dpm_sclk, computed once at load time.]],
+		hardware = "AMD GPU",
+		dependencies = {
+			{ target = "/sys/class/hwmon", descr = "Scanned for a hwmon node named 'amdgpu'" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

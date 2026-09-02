@@ -2,6 +2,8 @@
 
 local _, cache = ...
 
+local opts = {} -- no configurable options today; empty table still required
+
 local bar_colors = { -- >{
 	{ r = 134, g = 190, b = 67 },  -- #86be43
 	{ r = 230, g = 200, b = 60 },
@@ -60,6 +62,22 @@ return { -- >{
 	min_w = 24,
 	min_h = 7,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "cpu",
+		long_name = "CPU Load",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "1/5/15-minute load average as three horizontal bars.",
+		description = [[Draws the 1/5/15-minute system load average as three
+horizontal bars sharing a common 0-12 axis.]],
+		dependencies = { "CPU load average" },
+	},
+	sample = {
+		{ one = { 0, 8 }, five = { 0, 8 }, fifteen = { 0, 8 } },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

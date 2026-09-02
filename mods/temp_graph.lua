@@ -1,44 +1,32 @@
--- Custom module: average CPU core clock frequency (across all cores) plus
--- optional GPU core clock, history scrolling right-to-left, same rendering
--- style as TEMP Graph (sextant resolution, brightness wins on overlap) with
--- two fixed colors: CPU in blue, GPU in magenta. The Y scale spans the lower
--- of the tracked devices' minimum frequency to the higher of their maximum,
--- read from the fetchers' data.
+-- Custom module: CPU and GPU temperature history, scrolling right-to-left,
+-- same rendering style as CPU Cores Graph / GPU Graph (sextant resolution,
+-- brightness wins on overlap) but with two fixed colors instead of a
+-- monochrome palette: CPU in blue, GPU in magenta.
 --
--- Data source: fetcher "CPU_Clock" (fetchers/CPU_Clock.lua, averaged across
--- cores here), plus fetcher "GPU_Clock_AMD" (fetchers/GPU_Clock_AMD.lua) if listed
--- as a second dependency in this module's own config entry -- its presence
--- in `fetcher={...}` is what turns the GPU line on, no separate option
--- needed.
+-- Data source: fetchers "CPU_Temp_AMD" and "GPU_Temp_AMD" (fetchers/CPU_Temp_AMD.lua,
+-- fetchers/GPU_Temp_AMD.lua), each with potentially different refresh rates --
+-- the params below are read from whichever cache slot has the latest data
+-- each tick, independently.
 
 local ffi_bit = require("bit")
 local sChar = require("sextant_chars")
 
 local entry, cache = ...
 
-local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
+local opts = { -- >{
+	interval = { 30, "Seconds shown on the X axis window" },
+} -- >}
 
-local function read_cpu_avg_ghz() -- >{
-	local data = cache[1] or {}
-	local sum, n = 0, 0
-	for _, v in pairs(data.cores or {}) do
-		sum = sum + v
-		n = n + 1
-	end
-	if n == 0 then return nil end
-	return sum / n
-end -- >}
+local time_interval = (entry and entry.interval) or opts.interval[1]
+
+local TEMP_MIN, TEMP_MAX = 40, 100
 
 local params = { -- >{
-	{ id = 1, label = "CPU", color = { r = 70, g = 150, b = 255 }, -- blue
-		read = read_cpu_avg_ghz },
+	{ id = 1, label = "CPU", color = { r = 70, g = 150, b = 255 } }, -- blue
+	{ id = 2, label = "GPU", color = { r = 230, g = 90, b = 230 } }, -- magenta
 } -- >}
-if cache[2] then
-	params[#params + 1] = { id = 2, label = "GPU", color = { r = 230, g = 90, b = 230 }, -- magenta
-		read = function() return cache[2].ghz end }
-end
 
--- raw sysfs readings are noisy tick to tick; smoothing before plotting
+-- raw sensor readings are noisy tick to tick; smoothing before plotting
 -- keeps the curve reading as a smooth line, same as the other graphs.
 local SMOOTHING_ALPHA = 0.35
 
@@ -90,22 +78,6 @@ local function x_tick_labels() -- >{
 	return labels
 end -- >}
 
--- same tick-spacing rule as core.lua's Pow2Ticks (largest power-of-two
--- division count that fits the budget), but formatted to one decimal place
--- since GHz values need sub-integer precision to be readable (unlike the
--- percentage/Celsius scales every other module's axis uses).
-local function ghz_ticks(min, max, budget) -- >{
-	local divisions = 1
-	while divisions * 2 <= budget do divisions = divisions * 2 end
-	divisions = math.max(divisions, 2)
-	local ticks = {}
-	for i = 0, divisions do
-		local v = min + (max - min) * i / divisions
-		ticks[#ticks + 1] = string.format("%.1f", v)
-	end
-	return ticks
-end -- >}
-
 local function brightness(c) -- >{
 	return c.r + c.g + c.b
 end -- >}
@@ -148,7 +120,7 @@ local function mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, col
 	end
 end -- >}
 
-local function build_grid(graph_w, graph_h, now, scale_min, scale_max) -- >{
+local function build_grid(graph_w, graph_h, now) -- >{
 	local grid = {}
 	for row = 0, graph_h - 1 do
 		grid[row] = {}
@@ -166,7 +138,7 @@ local function build_grid(graph_w, graph_h, now, scale_min, scale_max) -- >{
 				local seconds_ago = time_interval * (1 - slot / sample_cols)
 				local v = value_at_time(h, now - seconds_ago)
 				if v ~= nil then
-					local frac = (v - scale_min) / (scale_max - scale_min)
+					local frac = (v - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)
 					local level = math.floor(frac * (vres - 1) + 0.5)
 					if prev_slot ~= nil then
 						mark_diagonal(grid, vres, prev_slot, prev_level, slot, level, param.color)
@@ -187,22 +159,14 @@ end -- >}
 local function redraw(pane) -- >{
 	local now = MonotonicNow()
 
-	local cpu_data = cache[1] or {}
-	local gpu_data = cache[2]
-	local scale_min = cpu_data.min or 0.6
-	local scale_max = cpu_data.max or 5
-	if gpu_data then
-		scale_min = math.min(scale_min, gpu_data.min or 0.6)
-		scale_max = math.max(scale_max, gpu_data.max or 3)
-	end
-
-	for _, param in ipairs(params) do
-		local v = param.read()
+	for i, param in ipairs(params) do
+		local data = cache[i]
+		local v = data and data.temp_c
 		if v ~= nil then
-			-- clamp into the fixed display range right away so an
-			-- out-of-range reading can never push a plotted point outside
-			-- the grid
-			v = clamp(v, scale_min, scale_max)
+			-- clamp into the fixed 20-110 display range right away so an
+			-- out-of-range sensor glitch can never push a plotted point
+			-- outside the grid
+			v = clamp(v, TEMP_MIN, TEMP_MAX)
 			local prev = smoothed[param.id]
 			local ema = prev and (SMOOTHING_ALPHA * v + (1 - SMOOTHING_ALPHA) * prev) or v
 			smoothed[param.id] = ema
@@ -217,15 +181,15 @@ local function redraw(pane) -- >{
 	local graph_w = math.max(pane.w - AXIS_W - 1, 0)
 	local graph_h = math.max(pane.h - 2, 1)
 
-	local yticks = ghz_ticks(scale_min, scale_max, math.max(1, math.floor(graph_h / 4)))
+	local yticks = Pow2Ticks(TEMP_MIN, TEMP_MAX, math.max(1, math.floor(graph_h / 4)))
 	Axis(
 		{ x = axis_x, y = pane.y, w = graph_w, h = graph_h },
 		{ min = -time_interval, max = 0 },
-		{ min = scale_min, max = scale_max },
+		{ min = TEMP_MIN, max = TEMP_MAX },
 		{ x = x_tick_labels(), y = yticks }
 	)
 
-	local grid = build_grid(graph_w, graph_h, now, scale_min, scale_max)
+	local grid = build_grid(graph_w, graph_h, now)
 	for row = 0, graph_h - 1 do
 		local run_col = 0
 		local run_color = grid[row][0].color
@@ -246,10 +210,28 @@ local function redraw(pane) -- >{
 end -- >}
 
 return { -- >{
-	title = "CLOCK Frequency Avg Graph",
+	title = "TEMP Graph",
 	min_w = 20,
 	min_h = 8,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "temp_graph",
+		long_name = "TEMP Graph",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "CPU and/or GPU temperature history graph.",
+		description = [[Plots CPU temperature (blue) and/or GPU temperature
+(magenta) history, each read from its own independently-refreshing
+fetcher; use NONE in fetcher={...} to show only one of the two.]],
+		dependencies = { "CPU temperature (Celsius)", "GPU temperature (Celsius)" },
+	},
+	sample = {
+		{ temp_c = { 40, 90 } },
+		{ temp_c = { 40, 90 } },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

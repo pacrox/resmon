@@ -1,5 +1,9 @@
 -- Base fetcher: process list (PID/USER/%CPU/%MEM/TIME+/COMMAND), from /proc
 
+local opts = { -- >{
+	refresh = { 1.5, "Fetch refresh rate in seconds" },
+} -- >}
+
 -- assumed clock ticks per second (sysconf(_SC_CLK_TCK)); standard on Linux x86_64
 local CLK_TCK = 100
 
@@ -85,7 +89,26 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 1.5,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	info = {
+		type = "fetcher",
+		name = "TOP",
+		data_type = "process list",
+		long_name = "Process List",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Per-process PID/USER/%CPU/%MEM/TIME+/COMMAND snapshot.",
+		description = [[Walks /proc for every running PID and reports CPU%
+(derived from a delta between ticks), memory% (VmRSS over total RAM), total
+CPU time and the owning username, unsorted -- sorting is a display concern.]],
+		hardware = "any",
+		dependencies = {
+			{ target = "/proc", descr = "Process pseudo-filesystem (per-PID stat/status)" },
+			{ target = "/etc/passwd", descr = "Used to resolve numeric UIDs to usernames" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

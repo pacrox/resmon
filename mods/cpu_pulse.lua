@@ -9,6 +9,8 @@
 
 local _, cache = ...
 
+local opts = {} -- no configurable options today; empty table still required
+
 -- 25-shade gradient: green (0%) through yellow/orange (50%) to red (100%),
 -- two linear segments joined at the midpoint. BandColor() (see core.lua)
 -- picks one of these 25 entries by value, giving 25 discrete color steps
@@ -135,6 +137,23 @@ return { -- >{
 	min_w = 10,
 	min_h = 6,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "cpu_pulse",
+		long_name = "CPU Pulse",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Mirrored per-core CPU usage bars forming a symmetric pulse shape.",
+		description = [[Draws each core's usage twice, in mirrored ramps
+outward from the center, so the busiest cores sit at the middle and the
+idlest at both edges.]],
+		dependencies = { "per-core CPU usage percentage" },
+	},
+	sample = {
+		{ cores = { { 0, 100 }, count = 8 } },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

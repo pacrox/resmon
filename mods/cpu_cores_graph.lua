@@ -14,7 +14,11 @@ local sChar = require("sextant_chars")
 
 local entry, cache = ...
 
-local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
+local opts = { -- >{
+	interval = { 30, "Seconds shown on the X axis window" },
+} -- >}
+
+local time_interval = (entry and entry.interval) or opts.interval[1]
 
 -- monochrome value gradient endpoints, dark green to pale green, same hue
 -- throughout, only brightness varies. The gradient is rebuilt each redraw
@@ -252,6 +256,23 @@ return { -- >{
 	min_w = 20,
 	min_h = 8,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "cpu_cores_graph",
+		long_name = "CPU Cores Graph",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Per-core CPU usage history, all cores overlaid.",
+		description = [[Plots every core's usage history on one shared 0-100
+graph, each core colored by how far its average sits from the group
+average, darkest-first so the palest curve stays on top.]],
+		dependencies = { "per-core CPU usage percentage" },
+	},
+	sample = {
+		{ cores = { { 0, 100 }, count = 8 } },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

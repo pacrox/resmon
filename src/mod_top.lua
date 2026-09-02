@@ -2,6 +2,8 @@
 
 local _, cache = ...
 
+local opts = {} -- no configurable options today; empty table still required
+
 local procs_color = { -- >{
 	{ r = 60, g = 60, b = 60 },
 	{ r = 150, g = 110, b = 40 },
@@ -53,6 +55,39 @@ return { -- >{
 	min_w = 40,
 	min_h = 4,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "top",
+		long_name = "Top Processes",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Process table sorted by CPU usage.",
+		description = [[Lists running processes (PID/USER/%CPU/%MEM/TIME+/
+COMMAND), sorted by CPU usage descending, colored by CPU load band.]],
+		dependencies = { "process list" },
+	},
+	-- fake process rows: "record"+"count" repeats the record template N times
+	-- (each numeric leaf independently noised per row); a leaf that is an
+	-- array of literals (not a {min,max} pair) cycles through those literals
+	-- instead of generating noise -- see fake_fetcher.lua
+	sample = {
+		{
+			procs = {
+				count = 6,
+				record = {
+					pid = { 1234, 5820, 9981, 342, 7710, 2465 },
+					user = { "root", "user", "daemon" },
+					cpu_pct = { 0, 60 },
+					mem_pct = { 0, 15 },
+					time_str = "0:00",
+					command = { "bash", "chrome", "resmon", "sshd", "systemd", "Xorg" },
+				},
+			},
+			mem_total_kb = { 4000000, 32000000 },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

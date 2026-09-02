@@ -15,6 +15,10 @@
 -- keep showing stale/no data for that line, which it already handles
 -- gracefully (see the shared fetcher-error contract in core.lua).
 
+local opts = { -- >{
+	refresh = { 0.5, "Fetch refresh rate in seconds" },
+} -- >}
+
 -- hwmon device index isn't stable across systems, only the driver name is;
 -- resolved once at fetcher load by scanning hwmon0..hwmon31 for a name match.
 local function find_hwmon_temp_path(driver_name) -- >{
@@ -40,7 +44,27 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 0.5,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	ranges = { temp_c = { 20, 100 } },
+	info = {
+		type = "fetcher",
+		name = "GPU_Temp_INTEL",
+		data_type = "GPU temperature (Celsius)",
+		long_name = "GPU Temperature (Intel)",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Integrated GPU temperature, if the kernel exposes one.",
+		description = [[UNTESTED, and likely unavailable on most systems: an
+Intel iGPU typically shares the CPU package's thermal sensor rather than
+exposing its own. Reads the i915 hwmon node's temp1_input where present
+(kernel 6.2+).]],
+		hardware = "Intel iGPU",
+		dependencies = {
+			{ target = "/sys/class/hwmon", descr = "Scanned for a hwmon node named 'i915' (kernel 6.2+ only)" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

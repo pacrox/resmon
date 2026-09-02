@@ -16,7 +16,11 @@ local sChar = require("sextant_chars")
 
 local entry, cache = ...
 
-local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
+local opts = { -- >{
+	interval = { 30, "Seconds shown on the X axis window" },
+} -- >}
+
+local time_interval = (entry and entry.interval) or opts.interval[1]
 
 -- monochrome value gradient endpoints, dark to #FFD068, same hue
 -- throughout, only brightness varies. The gradient is rebuilt each redraw
@@ -331,6 +335,32 @@ return { -- >{
 	min_w = 20,
 	min_h = 8,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "gpu_graph",
+		long_name = "GPU Graph",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "GPU engine/perf-counter usage history graph.",
+		description = [[Plots 3D/Compute engine usage plus every GRBM/GRBM2
+performance-counter sub-block over time, colored by distance from the
+group average, darkest-first.]],
+		dependencies = { "GPU engine/memory usage (amdgpu_top JSON)" },
+	},
+	-- static (non-animated) fake snapshot: the real data is opaque JSON text
+	-- parsed by regex, not a flat set of noised leaves, so a fixed literal
+	-- string is used instead of noise -- see fake_fetcher.lua's "plain
+	-- string" leaf rule
+	sample = {
+		{
+			raw = "{}",
+			totals = '{"GFX":{"unit":"%","value":42.0},"Compute":{"unit":"%","value":10.0}}',
+			grbm = '{"Depth Block":{"unit":"%","value":12.3},"Color Block":{"unit":"%","value":8.1},"Geometry Engine":{"unit":"%","value":5.0},"Graphics Pipe":{"unit":"%","value":15.2},"Primitive Assembly":{"unit":"%","value":3.4},"Shader Export":{"unit":"%","value":9.9},"Shader Processor Interpolator":{"unit":"%","value":11.1},"Texture Pipe":{"unit":"%","value":22.0}}',
+			grbm2 = '{"Command Processor -  Compute":{"unit":"%","value":4.0},"Command Processor -  Fetcher":{"unit":"%","value":2.0},"Command Processor - Graphics":{"unit":"%","value":6.0},"Efficiency Arbiter":{"unit":"%","value":1.0},"Render Backend Memory Interface":{"unit":"%","value":7.0},"RunList Controller":{"unit":"%","value":0.5},"SDMA":{"unit":"%","value":3.0},"Texture Cache per Pipe":{"unit":"%","value":18.0},"Unified Translation Cache Level-2":{"unit":"%","value":9.0}}',
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

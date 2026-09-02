@@ -1,5 +1,9 @@
 -- Custom fetcher: per-core CPU clock frequency, from cpufreq sysfs
 
+local opts = { -- >{
+	refresh = { 0.5, "Fetch refresh rate in seconds" },
+} -- >}
+
 -- core ids aren't guaranteed contiguous/starting at 0 in theory, but /proc/stat
 -- is the same discovery source every per-core module uses, so this stays
 -- consistent with them.
@@ -60,7 +64,25 @@ end -- >}
 
 return { -- >{
 	fetch = fetch,
-	default_delay = 0.5,
+	default_delay = opts.refresh[1],
+	opts = opts,
+	info = {
+		type = "fetcher",
+		name = "CPU_Clock",
+		data_type = "per-core CPU clock frequency (GHz)",
+		long_name = "CPU Clock Frequency",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Per-core CPU clock frequency, in GHz.",
+		description = [[Reads each core's current clock frequency from
+cpufreq sysfs, plus the global min/max frequency across every core,
+computed once at load time.]],
+		hardware = "any",
+		dependencies = {
+			{ target = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", descr = "Per-core current CPU frequency (cpufreq sysfs)" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

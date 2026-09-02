@@ -21,10 +21,14 @@ local sChar = require("sextant_chars")
 
 local entry, cache = ...
 
+local opts = { -- >{
+	interval = { 30, "Seconds shown on the X axis window" },
+} -- >}
+
 local GPU_ID = "gpu" -- sentinel key, distinct from any numeric core id
 local GPU_COLOR = { r = 255, g = 150, b = 255 } -- pale magenta, fixed
 
-local time_interval = (entry and entry.interval) or 30 -- seconds shown on the X axis window (config "interval", default 30), ticked every 10s
+local time_interval = (entry and entry.interval) or opts.interval[1]
 
 -- monochrome value gradient endpoints, dark navy to pale sky blue, same hue
 -- throughout, only brightness varies. The gradient is rebuilt each redraw
@@ -311,6 +315,24 @@ return { -- >{
 	min_w = 20,
 	min_h = 8,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "clock_graph",
+		long_name = "CLOCK Frequency Graph",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Per-core CPU clock (plus optional GPU clock) history graph.",
+		description = [[Plots each core's clock frequency history with a
+per-core shade gradient, plus an optional GPU clock line (fixed magenta) if
+a second fetcher is attached, scrolling right-to-left.]],
+		dependencies = { "per-core CPU clock frequency (GHz)", "GPU clock frequency (GHz)" },
+	},
+	sample = {
+		{ cores = { { 0.6, 5 }, count = 8 }, min = 0.6, max = 5 },
+		{ ghz = { 0.6, 3 }, min = 0.6, max = 3 },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

@@ -10,6 +10,7 @@
 #include "block_fonts_bc.h"
 #include "big_font_bc.h"
 #include "med_font_bc.h"
+#include "fake_fetcher_bc.h"
 #include "fetch_cpu_average_bc.h"
 #include "fetch_mem_bc.h"
 #include "fetch_top_bc.h"
@@ -47,6 +48,7 @@ int main(int argc, char **argv) {
 	preload(L, "block_fonts", (const char *)luaJIT_BC_block_fonts, luaJIT_BC_block_fonts_SIZE);
 	preload(L, "big_font", (const char *)luaJIT_BC_big_font, luaJIT_BC_big_font_SIZE);
 	preload(L, "med_font", (const char *)luaJIT_BC_med_font, luaJIT_BC_med_font_SIZE);
+	preload(L, "fake_fetcher", (const char *)luaJIT_BC_fake_fetcher, luaJIT_BC_fake_fetcher_SIZE);
 	preload(L, "fetch_cpu_average", (const char *)luaJIT_BC_fetch_cpu_average, luaJIT_BC_fetch_cpu_average_SIZE);
 	preload(L, "fetch_mem", (const char *)luaJIT_BC_fetch_mem, luaJIT_BC_fetch_mem_SIZE);
 	preload(L, "fetch_top", (const char *)luaJIT_BC_fetch_top, luaJIT_BC_fetch_top_SIZE);

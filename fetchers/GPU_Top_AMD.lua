@@ -16,12 +16,16 @@
 -- previous fdinfo interval, which doesn't exist yet on the first sample.
 -- Non-issue in practice since the pipe is opened once and read every tick.
 
+local opts = { -- >{
+	refresh = { 0.5, "Fetch refresh rate in seconds (also sizes amdgpu_top's own -s sampling interval)" },
+} -- >}
+
 -- entry.refresh (from this fetcher's config entry) sizes amdgpu_top's own
 -- -s <ms> sampling interval, so the subprocess's production rate actually
--- matches how often the scheduler calls fetch() -- falls back to 500ms if
--- unset, matching the previous hardcoded default.
+-- matches how often the scheduler calls fetch() -- falls back to opts.refresh
+-- if unset.
 local entry = ...
-local REFRESH_MS = math.max(math.floor(((entry and entry.refresh) or 0.5) * 1000), 100)
+local REFRESH_MS = math.max(math.floor(((entry and entry.refresh) or opts.refresh[1]) * 1000), 100)
 
 local gpu_pipe = nil
 local pipe_failed = false
@@ -92,6 +96,24 @@ end -- >}
 return { -- >{
 	fetch = fetch,
 	default_delay = REFRESH_MS / 1000,
+	opts = opts,
+	info = {
+		type = "fetcher",
+		name = "GPU_Top_AMD",
+		data_type = "GPU engine/memory usage (amdgpu_top JSON)",
+		long_name = "GPU Top (AMD)",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "GPU engine and memory usage, from a shared amdgpu_top -J stream.",
+		description = [[Spawns amdgpu_top -J once as a long-running NDJSON
+stream and reads one snapshot per fetch(), shared by every module that
+depends on this fetcher instead of one process per module.]],
+		hardware = "AMD GPU",
+		dependencies = {
+			{ target = "amdgpu_top", descr = "External program providing GPU engine/memory JSON telemetry" },
+		},
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}

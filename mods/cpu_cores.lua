@@ -3,6 +3,8 @@
 
 local _, cache = ...
 
+local opts = {} -- no configurable options today; empty table still required
+
 local bars_colors = { -- >{
 	{ r = 134, g = 190, b = 67 },  -- green, #86be43
 	{ r = 230, g = 200, b = 60 },  -- yellow
@@ -63,6 +65,22 @@ return { -- >{
 	min_w = 10,
 	min_h = 6,
 	redraw = redraw,
+	opts = opts,
+	info = {
+		type = "module",
+		name = "cpu_cores",
+		long_name = "CPU Cores",
+		author = "resmon",
+		release = "v0.4.0",
+		date = "2026-09-02",
+		short_descr = "Per-core CPU usage as vertical bars, busiest to idlest.",
+		description = [[Draws one vertical bar per core, sorted
+busiest-to-idlest left-to-right.]],
+		dependencies = { "per-core CPU usage percentage" },
+	},
+	sample = {
+		{ cores = { { 0, 100 }, count = 8 } },
+	},
 } -- >}
 
 -- vim: filetype=lua foldmethod=marker foldmarker=>{,>}
