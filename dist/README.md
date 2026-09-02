@@ -7,8 +7,12 @@ combination of panes you want.
 ## Install
 
 ```sh
-./install.sh
+./install.sh [--upgrade]
 ```
+
+`--upgrade` only matters when re-running the script over a previous
+resmon 0.3.0 install (see below) — it skips the confirmation prompt and
+proceeds straight to the automatic rename. It has no effect otherwise.
 
 This copies the `resmon` binary to `~/.local/bin/resmon`, and sets up
 `~/.config/resmon/` with the bundled fetchers/modules, a starter
@@ -86,8 +90,9 @@ resmon clock_graph -d     # live demo pane (fake data unless you pass -f)
 `-i`/`--info` shows metadata and a dependency check; `-h`/`--help` shows
 the addon's own configurable options; `-s`/`--sample` prints or draws one
 static sample; `-d`/`--demo` is a live-updating full-screen demo (`Q`/`ESC`
-to quit). Run `resmon <addon_name>` with no mode flag for that addon's own
-option summary, or `resmon --list` to see everything installed.
+to quit). Running `resmon <addon_name>` with no mode flag at all prints a
+description of the parameters it accepts; `resmon --list` shows everything
+installed.
 
 ## Terminal recommendations
 
