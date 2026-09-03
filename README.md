@@ -353,13 +353,13 @@ MIT License (plus a symbolic, non-binding protest statement — see
 
 <table>
 <tr>
-<td valign="top">
+<td width="50%" valign="top">
 <a href="https://www.lua.org/about.html"><img src="images/Lua_logo.png" height="158"></a><br>
 <b>LUA</b><br>
 Lua is a powerful, efficient, lightweight, embeddable scripting language.<br>
 <a href="https://www.lua.org/about.html"><i>lua.org</i></a>
 </td>
-<td valign="top">
+<td width="50%" valign="top">
 <a href="https://awesometui.com/resmon"><img src="https://awesometui.com/og.webp" height="158"></a><br>
 <b>resmon - Terminal UI application</b><br>
 A zero-dependency TUI resource monitor written in LuaJIT<br>
