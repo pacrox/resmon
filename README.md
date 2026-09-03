@@ -176,7 +176,7 @@ copy it wherever you like on `$PATH` separately.
 ./resmon [options]
 ```
 
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Description |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Description |
 |---|---|
 | `--config-dir <path>` | Override the default config dir (`~/.config/resmon`); implies `<dir>/addons/{fetchers,mods}` unless overridden below |
 | `-c`<br>`--config-file <path>` | Read this config file instead of `<config-dir>/config.lua` — does **not** affect where fetchers/modules are searched, so situational config files can live anywhere on disk while still using the normally installed addons |
@@ -212,7 +212,7 @@ syntax — it's never part of a filename or a config entry.
 With no mode flag, it prints the addon's own CLI options. Modes are
 cumulative — `resmon MEM -i -s` runs both, in order:
 
-| &nbsp;&nbsp;Mode&nbsp;&nbsp; | Description |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Mode&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Description |
 |---|---|
 | `-i`<br>`--info` | Full info/metadata: author, description, hardware, dependency check (files/programs it needs, with a `VALID`/`FAULT` marker), default options |
 | `-h`<br>`--help` | The addon's own configurable options, with their defaults |
@@ -221,7 +221,7 @@ cumulative — `resmon MEM -i -s` runs both, in order:
 
 Common to both `-s` and `-d`:
 
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Description |
+| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Description |
 |---|---|
 | `-x`<br>`--width <w>` | Override the pane width (module `-s`/`-d` only) |
 | `-y`<br>`--height <h>` | Override the pane height (module `-s`/`-d` only) |
