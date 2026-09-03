@@ -61,7 +61,7 @@ verify them, so they ship without guarantee. A failing one degrades the
 dependent module to stale/no data rather than crashing; reports from real
 Intel hardware are welcome.
 
-| Fetcher | OS/Arch | Source | Depend. | Notes |
+| Fetcher | &nbsp;&nbsp;&nbsp;&nbsp;OS/Arch&nbsp;&nbsp;&nbsp;&nbsp; | Source | Depend. | Notes |
 |---|---|---|---|---|
 | `CPU_Average` | Linux (any arch) | `/proc/loadavg` | — | Fixed 60s refresh, not overridable |
 | `MEM` | Linux (any arch) | `/proc/meminfo` | — | — |
