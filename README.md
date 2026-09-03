@@ -172,6 +172,13 @@ into `~/.config/resmon/addons/` — see [Contributing](#contributing).
 `make install-config` does **not** install the `resmon` binary itself —
 copy it wherever you like on `$PATH` separately.
 
+**Note:** custom module filenames dropped the `mod_` prefix between
+v0.3.0 and v0.4.0 (e.g. `mod_cpu_cores.lua` → `cpu_cores.lua`).
+`make install-config` only copies, it never deletes — if you're
+upgrading an existing install, remove any stale `mod_*.lua` files from
+`~/.config/resmon/addons/mods/` yourself, and update your `config.lua`'s
+`mod = "..."` fields to the new names.
+
 ## Usage
 
 ```sh
