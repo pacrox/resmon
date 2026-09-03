@@ -30,6 +30,8 @@ Every fetcher and module is self-documenting and independently runnable —
 them standalone, without a config file. See
 [Standalone addon CLI](#standalone-addon-cli) for the full syntax.
 
+<img src="images/addon-CLI-demo.gif" width="100%">
+
 ### Built-in Monitors
 
 | Fetcher | Module | Description |
