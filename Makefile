@@ -97,6 +97,7 @@ dist: $(BIN)
 	cp dist/install.sh $(DIST_DIR)/install.sh
 	chmod +x $(DIST_DIR)/install.sh
 	sed 's|\.\./images/|images/|g' dist/README.md > $(DIST_DIR)/README.md
+	cp LOG.md $(DIST_DIR)/LOG.md
 	cp images/desktop1.png images/desktop2.png images/desktop3.png images/desktop4.png $(DIST_DIR)/images/
 	cp config/config.lua.example config/config-full.lua.example config/config-horiz.lua.example $(DIST_DIR)/config/
 	cp config/config-full.lua.example $(DIST_DIR)/config/config.lua

@@ -335,6 +335,10 @@ skeletons covering the full addon contract; `config/ADDON-AUTHORING.md`
 walks through both. `make install-config` also installs them into
 `~/.config/resmon/addons/`.
 
+## Revision Log
+
+See [LOG.md](LOG.md) for what changed in each release.
+
 ## A Note on Licensing and Protest
 
 The author notes that **the Federative Republic of Brazil**, **the State of
