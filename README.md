@@ -167,7 +167,10 @@ specific Linux data source (`/proc/*`, `/sys/class/hwmon`, ...), which has
 no direct equivalent on macOS or BSD — porting to those platforms means
 rewriting the affected fetchers against their native APIs (e.g. `sysctl` on
 BSD/macOS, IOKit for macOS sensors), while the scheduler, module contract,
-and rendering layer stay untouched.
+and rendering layer stay untouched. Since fetchers and modules are plain
+Lua files with no compiled/native dependencies, this porting work is
+self-contained — no rebuild of the core binary is needed to add or replace
+a platform-specific fetcher.
 
 The current codebase was written by someone with access only to Linux/AMD
 hardware, so it has only been built and tested there.
