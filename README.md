@@ -156,6 +156,22 @@ Linux system, so no separate Lua/LuaJIT install is needed to run it.
 
 `make clean` removes build output (`host.o`, `resmon`, `generated/`).
 
+### Portability
+
+The core (LuaJIT + a minimal `host.c` layer) depends only on libc and is
+inherently portable across Unix-like systems — nothing in that layer is
+Linux-specific. Portability is *not* a matter of the implementation choice
+(LuaJIT + C over any other language); it comes down to how differently each
+Unix-like OS exposes system data. Every [fetcher](#fetchers) reads one
+specific Linux data source (`/proc/*`, `/sys/class/hwmon`, ...), which has
+no direct equivalent on macOS or BSD — porting to those platforms means
+rewriting the affected fetchers against their native APIs (e.g. `sysctl` on
+BSD/macOS, IOKit for macOS sensors), while the scheduler, module contract,
+and rendering layer stay untouched.
+
+The current codebase was written by someone with access only to Linux/AMD
+hardware, so it has only been built and tested there.
+
 ## Install
 
 ```sh
